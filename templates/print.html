@@ -92,12 +92,11 @@
     }
 
     /* One US Letter page. Screen padding equals the print margins, so what you see is what prints. */
-    .sheet { width: 8.5in; min-height: 11in; margin: 24px auto; padding: 0.5in 0.6in; background: #fff;
+    .sheet { width: 8.5in; min-height: 11in; margin: 24px auto; padding: 0.4in 0.5in; background: #fff;
              box-shadow: 0 2px 10px rgba(0, 0, 0, .12); }
+    /* --fs, --lh and --gap are set by the script (see fitStyle) so the resume fills exactly one page. */
     .resume { --fs: 10.5pt; --lh: 1.32; --gap: 1; color: var(--ink);
               font: var(--fs)/var(--lh) "Calibri", "Carlito", "Helvetica Neue", Arial, sans-serif; }
-    .resume.size-compact { --fs: 10pt; --lh: 1.27; --gap: .8; }
-    .resume.size-tight { --fs: 9.4pt; --lh: 1.22; --gap: .6; }
     .resume:focus { outline: none; }
 
     .resume header { text-align: center; margin-bottom: calc(8pt * var(--gap)); }
@@ -125,13 +124,14 @@
     .resume hr { border: none; border-top: 1px solid var(--rule); margin: 6pt 0; }
 
     /* Off-screen copy used to measure how many pages the resume fills at each size. */
-    #measure { position: absolute; left: -10000px; top: 0; width: 7.3in; visibility: hidden; }
+    #measure { position: absolute; left: -10000px; top: 0; width: 7.5in; visibility: hidden; }  /* 8.5in minus side margins */
     .error { max-width: 8.5in; margin: 40px auto; padding: 16px; background: #fff; border-radius: 8px; }
 
-    @page { size: letter; margin: 0.5in 0.6in; }
+    /* Keep these margins, .sheet's padding, #measure's width and PAGE_PX in step. */
+    @page { size: letter; margin: 0.4in 0.5in; }
     @media print {
       body { background: #fff; }
-      .toolbar, #panel { display: none !important; }
+      .toolbar, #panel, #measure { display: none !important; }
       .layout { display: block; }
       .sheet { box-shadow: none; margin: 0; padding: 0; width: auto; min-height: 0; }
       h2 { break-after: avoid; }
@@ -146,7 +146,7 @@
     <span class="title" id="doc-title">Loading…</span>
     <label>Size
       <select id="size">
-        <option value="auto">Auto-fit</option>
+        <option value="auto">Auto-fit to 1 page</option>
         <option value="normal">Normal</option>
         <option value="compact">Compact</option>
         <option value="tight">Tight</option>
@@ -156,7 +156,7 @@
     <button id="score-btn" aria-expanded="false" aria-controls="panel" hidden>Score <b id="score-num">…</b></button>
     <button id="save" hidden>Save edits</button>
     <button id="print" class="primary">Save as PDF</button>
-    <span class="hint">Click the page to edit. In the print dialog choose “Save as PDF” and turn off “Headers and footers”.</span>
+    <span class="hint" id="hint">Click the page to edit. In the print dialog choose “Save as PDF” and turn off “Headers and footers”.</span>
   </div>
   <div class="layout">
     <div class="sheet"><article id="resume" class="resume" contenteditable="true" spellcheck="true"></article></div>
@@ -172,23 +172,70 @@
     const sizeSelect = document.getElementById("size");
     const fit = document.getElementById("fit");
     const saveBtn = document.getElementById("save");
-    const PAGE_PX = 10 * 96;  // 11in page minus 0.5in top and bottom margins
-    const SIZES = ["normal", "compact", "tight"];
+    const PAGE_PX = 10.2 * 96;  // 11in page minus 0.4in top and bottom margins
+    const SAFETY_PX = 4;      // screen and print can round a line a pixel differently
+    // One dial for the whole layout, from 0 (smallest readable: 9 pt, tight spacing) to 1 (11 pt, roomy).
+    // Auto-fit picks the largest setting that still fits on one page; the others are fixed.
+    const SIZES = { tight: 0.2, compact: 0.5, normal: 0.8 };
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const fitStyle = (t) => ({ fs: lerp(9, 11, t), lh: lerp(1.2, 1.38, t), gap: lerp(0.5, 1.4, t) });
+    const linePx = (t) => (fitStyle(t).fs * fitStyle(t).lh * 96) / 72;
+    const sizeKey = `resume-size:${id}`;
+    let fitState = { over: 0, room: 0, auto: true };
 
-    function pagesAt(size) {
-      measure.className = `resume size-${size}`;
-      measure.innerHTML = resume.innerHTML;
-      return measure.offsetHeight / PAGE_PX;
+    function setStyle(el, t, extraGap = 0) {
+      const { fs, lh } = fitStyle(t);
+      const gap = fitStyle(t).gap + extraGap;
+      el.style.setProperty("--fs", `${fs.toFixed(2)}pt`);
+      el.style.setProperty("--lh", lh.toFixed(3));
+      el.style.setProperty("--gap", gap.toFixed(3));
+    }
+
+    function heightAt(t, extraGap = 0) {
+      setStyle(measure, t, extraGap);
+      return measure.offsetHeight;
+    }
+
+    // Largest x in [0, max] with fits(x), assuming bigger x only ever makes the resume taller.
+    function largest(max, fits) {
+      if (fits(max)) return max;
+      let lo = 0, hi = max;
+      for (let i = 0; i < 14; i++) {
+        const mid = (lo + hi) / 2;
+        if (fits(mid)) lo = mid; else hi = mid;
+      }
+      return lo;
     }
 
     function applySize() {
-      let size = sizeSelect.value;
-      if (size === "auto") size = SIZES.find((s) => pagesAt(s) <= 1) || "tight";
-      resume.className = `resume size-${size}`;
-      const pages = Math.ceil(pagesAt(size) - 0.02);
-      fit.textContent = pages <= 1 ? "Fits on 1 page ✓" : `${pages} pages`;
-      fit.classList.toggle("over", pages > 1);
-      try { localStorage.setItem("resume-size", sizeSelect.value); } catch {}
+      measure.innerHTML = resume.innerHTML;
+      const limit = PAGE_PX - SAFETY_PX;
+      const auto = sizeSelect.value === "auto";
+      let t = SIZES[sizeSelect.value] ?? 0.8;
+      let extraGap = 0;
+      if (auto) {
+        t = heightAt(0) > limit ? 0 : largest(1, (x) => heightAt(x) <= limit);
+        // Text size moves in steps (a line wraps, or doesn't), which can leave space at the bottom.
+        // Spread it between sections and bullets instead; spacing never re-wraps a line.
+        if (heightAt(t) <= limit) extraGap = largest(Math.max(0, 1.9 - fitStyle(t).gap), (g) => heightAt(t, g) <= limit);
+      }
+      setStyle(resume, t, extraGap);
+      const height = heightAt(t, extraGap);
+      const over = height > limit ? Math.ceil((height - limit) / linePx(t)) : 0;
+      const room = over ? 0 : Math.floor((limit - height) / linePx(t));
+      fitState = { over, room, auto };
+      const lines = (n) => `${n} line${n === 1 ? "" : "s"}`;
+      if (!over) {
+        fit.textContent = "Fits on 1 page ✓" + (room >= 3 ? ` · room for ${lines(room)}` : "");
+      } else if (!auto && heightAt(0) <= limit) {
+        fit.textContent = "Spills onto page 2 · choose Auto-fit";
+      } else {
+        fit.textContent = `About ${lines(over)} too long for 1 page`;
+      }
+      fit.title = `Text size ${fitStyle(t).fs.toFixed(1)} pt`;
+      fit.classList.toggle("over", over > 0);
+      try { auto ? localStorage.removeItem(sizeKey) : localStorage.setItem(sizeKey, sizeSelect.value); } catch {}
+      renderPanel();
     }
 
     // Edited page → Markdown, keeping bold, italics and links.
@@ -235,7 +282,8 @@
       document.title = doc.title;  // Chrome uses this as the PDF file name
       document.getElementById("doc-title").textContent = doc.title;
       resume.innerHTML = renderResume(doc.content);
-      try { sizeSelect.value = localStorage.getItem("resume-size") || "auto"; } catch {}
+      // A size picked for one resume stays with that resume; every new one starts on Auto-fit.
+      try { sizeSelect.value = localStorage.getItem(sizeKey) || "auto"; localStorage.removeItem("resume-size"); } catch {}
       (document.fonts ? document.fonts.ready : Promise.resolve()).then(applySize);
       loadCheck();
     }).catch((e) => {
@@ -261,6 +309,12 @@
       setTimeout(() => { saveBtn.textContent = "Save edits"; saveBtn.hidden = res.ok; }, 1500);
     });
     document.getElementById("print").addEventListener("click", () => window.print());
+    // Phones open the system print screen, which starts on a printer rather than PDF.
+    if (/Android/i.test(navigator.userAgent)) {
+      document.getElementById("hint").textContent = "Tap the page to edit. On the print screen, tap the printer name at the top, choose “Save as PDF”, and keep the paper size at Letter.";
+    } else if (/iPhone|iPad/i.test(navigator.userAgent)) {
+      document.getElementById("hint").textContent = "Tap the page to edit. On the print screen, tap Share (↑) and choose “Save to Files” to get the PDF.";
+    }
 
     // ---- score panel: keyword match + format (instant), AI fact check + recruiter's view (on request)
     const panel = document.getElementById("panel");
@@ -360,6 +414,9 @@
       const kw = report.keywords;
       if (kw && kw.in_profile.length) asks.push(`Work in these keywords from the job, which my profile supports, using the job description's wording: ${kw.in_profile.map((k) => k.label).join(", ")}.`);
       for (const c of report.format.checks) if (c.status !== "pass") asks.push(`${c.label}: ${c.detail}`);
+      // The page already scales text and spacing to fill one page, so ask for just the lines that make the difference.
+      if (fitState.over && fitState.auto) asks.push(`It's about ${fitState.over} lines longer than one page, even at the smallest readable text size. Shorten it by about ${fitState.over} lines (trim or merge the bullets least relevant to this job) and leave the rest as it is.`);
+      else if (fitState.room >= 6 && fitState.auto) asks.push(`There's room for about ${fitState.room} more lines on the page. If my profile has more experience relevant to this job, add the strongest of it; otherwise keep the length.`);
       const r = report.review && !report.review.stale ? report.review : null;
       if (r) {
         for (const c of r.unsupported) asks.push(`Unsupported claim, fix or remove: “${c.claim}” (${c.problem})`);

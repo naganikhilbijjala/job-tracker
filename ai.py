@@ -187,7 +187,7 @@ Two or three sentences aimed at this job.
 ### Project Name | Tech, Tech
 - What it does and the result
 
-Rules: use exactly these heading levels and the " | " separators; "Present" for current roles; most recent first; only include contact details and links that appear in the profile (write full URLs); skip sections the profile has nothing for; aim for one page, about 3–5 bullets for recent roles and fewer for older ones."""
+Rules: use exactly these heading levels and the " | " separators; "Present" for current roles; most recent first; only include contact details and links that appear in the profile (write full URLs); skip sections the profile has nothing for; aim for one page, about 3–5 bullets for recent roles and fewer for older ones. The resume page scales the text (9–11 pt) and spacing to fill exactly one page, so when asked to make it fit, or told it is some number of lines over or under, change about that many lines and no more."""
 
 
 SYSTEM_PROMPT = """You are a job-application assistant working for one candidate. You help them \

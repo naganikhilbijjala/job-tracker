@@ -846,7 +846,8 @@ function renderAiPanel(config) {
     <form id="ai-form">
       <label class="field">Provider<select name="provider">${options}</select></label>
       <label class="field">API key <a id="key-link" class="key-link small" target="_blank" rel="noopener">Get a key ↗</a>
-        <input name="api_key" type="password" autocomplete="off"></label>
+        <input name="api_key" type="password" autocomplete="new-password" spellcheck="false"
+          data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other"></label>
       <label class="field" id="base-url-field">Base URL<input name="base_url" inputmode="url"></label>
       <label class="field">Model
         <div class="row">
@@ -879,6 +880,16 @@ function applyProvider(provider) {
   loadModels();
 }
 
+// The key the person typed or pasted. A browser or password manager sometimes fills a saved site
+// password in here; that's never an API key, so it must not replace the saved one.
+function typedKey() {
+  const input = $("#ai-form").api_key;
+  for (const sel of [":autofill", ":-webkit-autofill"]) {
+    try { if (input.matches(sel)) return ""; } catch {}  // older browsers don't know one of these
+  }
+  return input.value.trim();
+}
+
 function setModelStatus(text, isError = false) {
   $("#model-status").textContent = text;
   $("#model-status").classList.toggle("error", isError);
@@ -893,7 +904,7 @@ let modelsRequest = 0;  // only the latest request may update the list (the prov
 async function loadModels() {
   const f = $("#ai-form");
   const provider = f.provider.value;
-  const key = f.api_key.value.trim();
+  const key = typedKey();
   const n = ++modelsRequest;
   if (!key && !aiConfig.saved?.[provider]?.has_key) {
     showModelInput();
@@ -929,7 +940,7 @@ async function loadModels() {
 }
 
 async function saveAi() {
-  const data = Object.fromEntries(new FormData($("#ai-form")));
+  const data = { ...Object.fromEntries(new FormData($("#ai-form"))), api_key: typedKey() };
   const { config } = await api("/api/ai", { method: "PUT", json: data });
   renderAiPanel(config);
 }
