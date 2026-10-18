@@ -7,7 +7,7 @@ A job application tracker, similar to Teal. You can run it on your computer or h
 - Saves the **job description** with each job, so you still have it after the posting is taken down.
 - Records **which resume** you sent to each job. Keeps a resume library, with optional **Google Drive** backup.
 - Sets the applied date and a 7-day **follow-up reminder** when you mark a job Applied.
-- **✨ AI assistant** on each job: tailored resumes (saved as PDF), skills lists, and answers for application forms, using your choice of AI provider. Plus an **MCP connection** so Claude can use your tracker directly.
+- **✨ AI assistant** on each job: tailored resumes (saved as PDF), skills lists, and answers for application forms, using your choice of AI provider. Each tailored resume gets a **score**: keyword match with the job, format checks, and an AI fact check against your profile. Plus an **MCP connection** so Claude can use your tracker directly.
 - **Auto-fill** from a pasted link, a **browser extension** that saves a job in one click, and on Android, **Share → Job Tracker** from LinkedIn or any other app.
 - CSV export.
 
@@ -78,6 +78,11 @@ The **paste-a-link** auto-fill in the app itself works for Greenhouse, Lever, As
 2. **Profile tab → AI provider:** choose Anthropic (Claude), OpenAI, Gemini, OpenRouter, Groq, or any OpenAI-compatible endpoint, then paste your API key and click **Test**. You pay the provider directly; a tailored resume costs a few cents. The key is stored in your tracker's database and is never sent back to the browser.
 3. **On any job, open ✨ Assistant.** It knows your profile and that job's saved description. Use the quick actions (*Tailor resume*, *10 skills to add*, *Why this company?*, *Cover letter*, *How well do I match?*), or paste any question from an application form. Each job keeps its own chat history.
 4. When it writes a resume, click **Open & save as PDF**. You can edit the page directly, then use **Save as PDF** (choose "Save as PDF" in the print dialog and turn off headers and footers). Tailored resumes stay listed on the job.
+5. **Check the score** in the panel beside the resume (the **Score** button shows or hides it). Applicant-tracking systems don't really score resumes. They read the text and recruiters search it by keyword, so the score estimates both:
+   - **Keywords (60%):** skills and phrases from the job description, split into *in the resume*, *in your profile but missing here* (easy wins), and *not in your profile* (real gaps: don't add these just for the score). A dot marks ones listed as requirements.
+   - **Format (40%):** name and contact details, standard section headings, dates on every role in one format, bullets per role, measurable results, strong opening verbs, length, and no tables or images.
+   - **AI review** (one AI request, on demand): a **fact check** that flags any claim your profile doesn't back up, plus a **recruiter's view** with a fit rating, strengths, and what to improve. It's marked out of date when you edit the resume.
+   - **Revise in chat** sends all of the above, with the current resume, to the job's assistant for a corrected version.
 
 ## Use with Claude (MCP)
 
@@ -87,7 +92,7 @@ At your computer, you can use Claude itself with full access to your tracker: jo
 - **claude.ai:** Settings → Connectors → Add custom connector → `https://YOUR-APP.vercel.app/mcp?key=TOKEN`
 - **Claude Desktop:** add the JSON config from the Profile tab. It runs `mcp_bridge.py` from this folder.
 
-Then ask, for example: *"Tailor my resume for the AssemblyAI job in my tracker and save it."* Anyone with the token can read and edit your tracker, so keep it private. **New token** on the Profile tab cancels the old one.
+Then ask, for example: *"Tailor my resume for the AssemblyAI job in my tracker and save it."* Saving returns the keyword and format check, and Claude can fix what it finds with `check_tailored_resume` and `update_tailored_resume`. Anyone with the token can read and edit your tracker, so keep it private. **New token** on the Profile tab cancels the old one.
 
 ---
 
@@ -125,7 +130,8 @@ Keyboard shortcuts: `n` adds a job, `/` searches, `Esc` closes the side panel.
 | `server.py` | Web app + API (WSGI; Vercel runs `server:app`) |
 | `database.py` | Local SQLite or Turso, plus resume file storage |
 | `gdrive.py` | Google Drive OAuth + upload |
-| `ai.py` | AI providers (Anthropic + OpenAI-compatible) and the assistant's prompt |
+| `ai.py` | AI providers (Anthropic + OpenAI-compatible), the assistant's prompt, and the AI resume review |
+| `scoring.py` | Resume score: keyword match with the job description and format checks (no AI) |
 | `mcp.py`, `mcp_bridge.py` | MCP server for Claude, and the Claude Desktop bridge |
 | `public/` | The web pages, icons, and home-screen app manifest |
 | `extension/` | Chrome/Firefox "Save job" extension |

@@ -8,10 +8,14 @@
   <style>
     :root {
       --ink: #111418; --muted: #4b5563; --rule: #9aa3ae; --accent: #2f6fed;
-      --bar-bg: #f6f7f9; --bar-border: #e1e4e8; --bar-ink: #1c2128; --desk: #e9ecf0;
+      --bar-bg: #f6f7f9; --bar-border: #e1e4e8; --bar-ink: #1c2128; --desk: #e9ecf0; --panel-muted: #5b6470;
+      --good-bg: #e7f6ec; --good: #1f7a45; --warn-bg: #fff4d6; --warn: #8a5a00; --bad-bg: #fde8e8; --bad: #b42318;
+      --chip-bg: #eef0f3;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --bar-bg: #171b21; --bar-border: #2b313a; --bar-ink: #e6e8eb; --desk: #0f1216; }
+      :root { --bar-bg: #171b21; --bar-border: #2b313a; --bar-ink: #e6e8eb; --desk: #0f1216; --panel-muted: #9aa3ae;
+              --good-bg: #16331f; --good: #6fd391; --warn-bg: #3a2c09; --warn: #f2c25b; --bad-bg: #3d1717; --bad: #ff8a80;
+              --chip-bg: #232931; }
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--desk); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -22,14 +26,62 @@
     }
     .toolbar .title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .toolbar .hint { font-size: 12px; opacity: .7; flex-basis: 100%; }
+    @media (max-width: 640px) { .toolbar .title { flex-basis: 100%; } }
     .toolbar label { font-size: 13px; display: flex; align-items: center; gap: 6px; }
-    #fit { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: #e7f6ec; color: #1f7a45; }
-    #fit.over { background: #fff4d6; color: #8a5a00; }
+    #fit { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--good-bg); color: var(--good); }
+    #fit.over { background: var(--warn-bg); color: var(--warn); }
+    #score-btn b { font-variant-numeric: tabular-nums; }
+    #score-btn[aria-expanded="true"] { background: var(--chip-bg); }
     button, select {
       font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--bar-border);
       background: transparent; color: inherit; cursor: pointer;
     }
     button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    .layout { display: flex; justify-content: center; align-items: flex-start; gap: 24px; }
+    .layout .sheet { margin-left: 0; margin-right: 0; flex: none; }
+
+    /* Score panel */
+    #panel { width: 340px; flex: none; position: sticky; top: 64px; max-height: calc(100vh - 80px); overflow: auto;
+             margin: 24px 0; padding: 16px; border-radius: 12px; background: var(--bar-bg);
+             border: 1px solid var(--bar-border); color: var(--bar-ink); font-size: 13px; }
+    #panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--panel-muted);
+                margin: 18px 0 8px; }
+    #panel p { margin: 0 0 8px; }
+    #panel .muted { color: var(--panel-muted); font-size: 12px; }
+    .score-head { display: flex; align-items: center; gap: 14px; }
+    .score-big { font-size: 34px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+    .score-big small { font-size: 14px; font-weight: 400; color: var(--panel-muted); }
+    .bars { flex: 1; display: grid; gap: 6px; }
+    .bar { display: grid; grid-template-columns: 70px 1fr 28px; align-items: center; gap: 6px; font-size: 12px; }
+    .bar .track { height: 6px; border-radius: 3px; background: var(--chip-bg); overflow: hidden; }
+    .bar .track span { display: block; height: 100%; border-radius: 3px; }
+    .tone-good { color: var(--good); } .tone-warn { color: var(--warn); } .tone-bad { color: var(--bad); }
+    .fill-good { background: var(--good); } .fill-warn { background: var(--warn); } .fill-bad { background: var(--bad); }
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+    .chip { padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--chip-bg); }
+    .chip.good { background: var(--good-bg); color: var(--good); }
+    .chip.warn { background: var(--warn-bg); color: var(--warn); }
+    .chip.req::after { content: " •"; opacity: .7; }
+    .checks { list-style: none; padding: 0; margin: 0; }
+    .checks li { display: grid; grid-template-columns: 18px 1fr; gap: 6px; margin-bottom: 8px; }
+    .checks .icon { font-weight: 700; }
+    .checks .detail { color: var(--panel-muted); font-size: 12px; }
+    .claim { padding: 8px 10px; border-radius: 8px; background: var(--bad-bg); margin-bottom: 8px; }
+    .claim q { font-weight: 600; color: var(--bad); }
+    .claim div { font-size: 12px; margin-top: 4px; }
+    .ok-box { padding: 8px 10px; border-radius: 8px; background: var(--good-bg); color: var(--good); margin-bottom: 8px; }
+    .stale { padding: 6px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 12px; margin-bottom: 8px; }
+    #panel ul.plain { margin: 0 0 8px; padding-left: 18px; }
+    #panel ul.plain li { margin-bottom: 4px; }
+    #panel .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+    #panel button:disabled { opacity: .6; cursor: default; }
+
+    @media screen and (max-width: 1250px) {
+      .layout { flex-direction: column; align-items: center; gap: 0; }
+      #panel { position: static; width: calc(100% - 32px); max-width: 8.5in; max-height: none; margin: 16px 16px 0; }
+      .layout .sheet { margin: 24px auto; }
+    }
 
     /* One US Letter page. Screen padding equals the print margins, so what you see is what prints. */
     .sheet { width: 8.5in; min-height: 11in; margin: 24px auto; padding: 0.5in 0.6in; background: #fff;
@@ -71,12 +123,13 @@
     @page { size: letter; margin: 0.5in 0.6in; }
     @media print {
       body { background: #fff; }
-      .toolbar { display: none; }
+      .toolbar, #panel { display: none !important; }
+      .layout { display: block; }
       .sheet { box-shadow: none; margin: 0; padding: 0; width: auto; min-height: 0; }
       h2 { break-after: avoid; }
     }
     @media screen and (max-width: 8.8in) {
-      .sheet { width: auto; min-height: 0; margin: 0; padding: 20px 16px; box-shadow: none; }
+      .layout .sheet { width: auto; min-height: 0; margin: 16px 0 0; padding: 20px 16px; box-shadow: none; align-self: stretch; }
     }
   </style>
 </head>
@@ -92,11 +145,15 @@
       </select>
     </label>
     <span id="fit"></span>
+    <button id="score-btn" aria-expanded="false" aria-controls="panel" hidden>Score <b id="score-num">…</b></button>
     <button id="save" hidden>Save edits</button>
     <button id="print" class="primary">Save as PDF</button>
     <span class="hint">Click the page to edit. In the print dialog choose “Save as PDF” and turn off “Headers and footers”.</span>
   </div>
-  <div class="sheet"><article id="resume" class="resume" contenteditable="true" spellcheck="true"></article></div>
+  <div class="layout">
+    <div class="sheet"><article id="resume" class="resume" contenteditable="true" spellcheck="true"></article></div>
+    <aside id="panel" hidden aria-label="Resume score"></aside>
+  </div>
   <div id="measure" class="resume"></div>
   <script src="/static/markdown.js"></script>
   <script>
@@ -172,6 +229,7 @@
       resume.innerHTML = renderResume(doc.content);
       try { sizeSelect.value = localStorage.getItem("resume-size") || "auto"; } catch {}
       (document.fonts ? document.fonts.ready : Promise.resolve()).then(applySize);
+      loadCheck();
     }).catch((e) => {
       document.querySelector(".sheet").outerHTML = `<div class="error">Couldn't load this resume: ${escapeHtml(e.message)}</div>`;
     });
@@ -191,9 +249,154 @@
       });
       saveBtn.disabled = false;
       saveBtn.textContent = res.ok ? "Saved ✓" : "Save failed";
+      if (res.ok) loadCheck();
       setTimeout(() => { saveBtn.textContent = "Save edits"; saveBtn.hidden = res.ok; }, 1500);
     });
     document.getElementById("print").addEventListener("click", () => window.print());
+
+    // ---- score panel: keyword match + format (instant), AI fact check + recruiter's view (on request)
+    const panel = document.getElementById("panel");
+    const scoreBtn = document.getElementById("score-btn");
+    const esc = (v) => escapeHtml(String(v ?? ""));
+    const tone = (n) => (n >= 75 ? "good" : n >= 50 ? "warn" : "bad");
+    let report = null;
+    let review = { running: false, error: "" };
+
+    async function loadCheck() {
+      try {
+        const res = await fetch(`/api/generated/${id}/check`);
+        if (!res.ok) return;
+        report = await res.json();
+      } catch { return; }
+      scoreBtn.hidden = false;
+      const num = document.getElementById("score-num");
+      num.textContent = report.score;
+      num.className = `tone-${tone(report.score)}`;
+      let open = true;
+      try { open = localStorage.getItem("score-panel") !== "closed"; } catch {}
+      setPanel(open);
+    }
+
+    function setPanel(open) {
+      panel.hidden = !open;
+      scoreBtn.setAttribute("aria-expanded", String(open));
+      try { localStorage.setItem("score-panel", open ? "open" : "closed"); } catch {}
+      if (open) renderPanel();
+    }
+    scoreBtn.addEventListener("click", () => setPanel(panel.hidden));
+
+    const bar = (label, n) => `<div class="bar"><span>${label}</span>
+      <span class="track"><span class="fill-${tone(n)}" style="width:${n}%"></span></span><b>${n}</b></div>`;
+    const chips = (list, cls) => `<div class="chips">${list.map((k) =>
+      `<span class="chip ${cls}${k.required ? " req" : ""}"${k.required ? ' title="Listed as a requirement"' : ""}>${esc(k.label)}</span>`
+    ).join("")}</div>`;
+    const ICONS = { pass: ["✓", "good"], warn: ["!", "warn"], fail: ["✕", "bad"] };
+
+    function renderPanel() {
+      if (!report || panel.hidden) return;
+      const kw = report.keywords, fmt = report.format;
+      const out = [`<div class="score-head"><div class="score-big tone-${tone(report.score)}">${report.score}<small>/100</small></div>
+        <div class="bars">${kw ? bar("Keywords", kw.score) : ""}${bar("Format", fmt.score)}</div></div>
+        <p class="muted" style="margin-top:10px">An estimate of how easily applicant-tracking systems will read this resume and
+        find it when searching for this job's skills. Real ATS systems don't show a score.</p>`];
+
+      out.push("<h3>Keywords from the job</h3>");
+      if (!report.job_id) out.push('<p class="muted">This resume isn\'t linked to a job, so there\'s nothing to match.</p>');
+      else if (!kw) out.push(`<p class="muted">${report.has_description ? "No skills or keywords found in the job description."
+        : "Save the job description on this job to see which of its keywords the resume covers."}</p>`);
+      else {
+        if (kw.matched.length) out.push(`<p>In the resume (${kw.matched.length})</p>`, chips(kw.matched, "good"));
+        if (kw.in_profile.length) out.push(`<p>In your profile but missing here (${kw.in_profile.length})</p>`,
+          chips(kw.in_profile, "warn"), '<p class="muted">Easy wins: add these where they truthfully fit.</p>');
+        if (kw.gaps.length) out.push(`<p>Not in your profile (${kw.gaps.length})</p>`, chips(kw.gaps, ""),
+          `<p class="muted">Don't add these just to raise the score. If you do have the experience, add it to your
+           Profile first so the resume can use it.</p>`);
+        if (kw.matched.concat(kw.in_profile, kw.gaps).some((k) => k.required)) out.push('<p class="muted">• listed as a requirement</p>');
+      }
+
+      out.push('<h3>Format</h3><ul class="checks">', ...fmt.checks.map((c) => {
+        const [icon, t] = ICONS[c.status];
+        return `<li><span class="icon tone-${t}">${icon}</span><span>${esc(c.label)}<div class="detail">${esc(c.detail)}</div></span></li>`;
+      }), "</ul>");
+
+      out.push("<h3>AI review</h3>");
+      const r = report.review;
+      if (r) {
+        if (r.stale) out.push('<div class="stale">The resume changed since this review. Run it again to check the new version.</div>');
+        out.push("<p><b>Fact check</b></p>", r.unsupported.length
+          ? r.unsupported.map((c) => `<div class="claim"><q>${esc(c.claim)}</q><div>${esc(c.problem)}</div>
+              ${c.fix ? `<div><b>Fix:</b> ${esc(c.fix)}</div>` : ""}</div>`).join("")
+          : '<div class="ok-box">✓ Every claim is backed by your profile.</div>');
+        out.push(`<p><b>Recruiter's view</b>${r.fit ? ` · fit <b class="tone-${tone(r.fit * 10)}">${r.fit}/10</b>` : ""}</p>`);
+        if (r.verdict) out.push(`<p><i>“${esc(r.verdict)}”</i></p>`);
+        if (r.strengths.length) out.push(`<p class="muted">Strengths</p><ul class="plain">${r.strengths.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`);
+        if (r.weaknesses.length) out.push(`<p class="muted">To improve</p><ul class="plain">${r.weaknesses.map((w) =>
+          `<li>${esc(w.issue)}${w.fix ? ` <span class="muted">→ ${esc(w.fix)}</span>` : ""}</li>`).join("")}</ul>`);
+      } else {
+        out.push(`<p class="muted">Checks every claim against your Profile so nothing made up slips through, and
+          gives a recruiter's first impression. Uses one AI request.</p>`);
+      }
+      if (review.error) out.push(`<p class="tone-bad">${esc(review.error)}</p>`);
+      out.push('<div class="actions">');
+      if (report.has_ai) out.push(`<button id="run-review" ${review.running ? "disabled" : ""}>${review.running
+        ? 'Reviewing… <span id="review-elapsed"></span>' : r ? "Run again" : "Run AI review"}</button>`);
+      else out.push('<p class="muted">Set up an AI provider on the <a href="/#profile">Profile tab</a> to use the AI review.</p>');
+      if (report.job_id && revisePrompt()) out.push('<button id="revise">Revise in chat</button>');
+      out.push("</div>");
+      panel.innerHTML = out.join("");
+    }
+
+    // A message for the job's assistant that asks for a fixed-up version of this resume.
+    function revisePrompt() {
+      const asks = [];
+      const kw = report.keywords;
+      if (kw && kw.in_profile.length) asks.push(`Work in these keywords from the job, which my profile supports, using the job description's wording: ${kw.in_profile.map((k) => k.label).join(", ")}.`);
+      for (const c of report.format.checks) if (c.status !== "pass") asks.push(`${c.label}: ${c.detail}`);
+      const r = report.review && !report.review.stale ? report.review : null;
+      if (r) {
+        for (const c of r.unsupported) asks.push(`Unsupported claim, fix or remove: “${c.claim}” (${c.problem})`);
+        for (const w of r.weaknesses) asks.push(`${w.issue.replace(/[.\s]*$/, ".")}${w.fix ? ` Suggested fix: ${w.fix}` : ""}`);
+      }
+      if (!asks.length) return "";
+      return `Revise this tailored resume:\n\n${asks.map((a) => `- ${a}`).join("\n")}\n\n` +
+        "Don't add skills, numbers or facts my profile doesn't support. Put the complete revised resume in the ```resume block.\n\n" +
+        `Current version:\n\n${toMarkdown(resume)}`;
+    }
+
+    panel.addEventListener("click", async (e) => {
+      const t = e.target.closest("button");
+      if (!t) return;
+      if (t.id === "revise") {
+        // Same tab, so sessionStorage carries the message over (a whole resume is too long for a URL).
+        try {
+          sessionStorage.setItem("assistant-ask", JSON.stringify({ job: report.job_id, text: revisePrompt() }));
+        } catch {
+          return alert("Couldn't hand the request to the assistant in this browser.");
+        }
+        location.href = `/?job=${report.job_id}&pane=assistant`;
+      } else if (t.id === "run-review") {
+        if (!saveBtn.hidden && !confirm("You have unsaved edits. The review checks the saved version. Continue?")) return;
+        review = { running: true, error: "" };
+        renderPanel();
+        const started = Date.now();
+        const timer = setInterval(() => {
+          const el = document.getElementById("review-elapsed");
+          if (el) el.textContent = `${Math.round((Date.now() - started) / 1000)}s`;
+        }, 1000);
+        try {
+          const res = await fetch(`/api/generated/${id}/review`, { method: "POST" });
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.error || res.statusText);
+          report.review = body;
+        } catch (err) {
+          review.error = err.message;
+        } finally {
+          clearInterval(timer);
+          review.running = false;
+          renderPanel();
+        }
+      }
+    });
   </script>
 </body>
 </html>

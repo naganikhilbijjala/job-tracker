@@ -785,6 +785,7 @@ async function loadAssistant() {
     $("#tailored-list").innerHTML = tailored.length
       ? `<div class="tailored"><b>Tailored resumes</b>${tailored.map((t) =>
           `<div class="row"><a href="/resume/${t.id}" target="_blank" rel="noopener">${esc(t.title)}</a>
+           ${t.score != null ? `<span class="score-pill ${t.score >= 75 ? "good" : t.score >= 50 ? "warn" : "bad"}" title="Keyword and format score">${t.score}</span>` : ""}
            <span class="muted small">${t.source === "claude" ? "from Claude · " : ""}${ago(t.created_at)}</span>
            <button type="button" class="icon small danger" data-delete-tailored="${t.id}" title="Delete">✕</button></div>`).join("")}</div>`
       : "";
@@ -899,7 +900,19 @@ async function boot() {
     autofill();
   } else if (openId) {
     await openDrawer(openId);
-    if (params.get("pane") === "assistant") showPane("assistant");
+    if (params.get("pane") === "assistant") {
+      showPane("assistant");
+      // Sent here by "Revise in chat" on a tailored resume's score panel.
+      let ask = null;
+      try {
+        ask = JSON.parse(sessionStorage.getItem("assistant-ask") || "null");
+        sessionStorage.removeItem("assistant-ask");
+      } catch {}
+      if (ask && ask.job === openId && ask.text) {
+        await loadAssistant();
+        sendChat(ask.text);
+      }
+    }
   }
 }
 

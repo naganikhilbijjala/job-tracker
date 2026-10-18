@@ -34,6 +34,7 @@ import ai
 import database
 import gdrive
 import mcp
+import scoring
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "public"
@@ -814,6 +815,8 @@ def jobs_delete(req, job_id):
     db, _ = backend()
     db.run_many([("DELETE FROM events WHERE job_id = ?", (job_id,)),
                  ("DELETE FROM chat_messages WHERE job_id = ?", (job_id,)),
+                 ("DELETE FROM resume_reviews WHERE generated_id IN "
+                  "(SELECT id FROM generated_resumes WHERE job_id = ?)", (job_id,)),
                  ("DELETE FROM generated_resumes WHERE job_id = ?", (job_id,)),
                  ("DELETE FROM jobs WHERE id = ?", (job_id,))])
     return json_response({"ok": True})
@@ -1096,8 +1099,13 @@ def generated_list(req):
     job_id = req.query.get("job_id")
     sql = ("SELECT g.id, g.job_id, g.title, g.source, g.created_at, j.company, j.title AS job_title "
            "FROM generated_resumes g LEFT JOIN jobs j ON j.id = g.job_id")
-    rows = db.query(sql + " WHERE g.job_id = ? ORDER BY g.id DESC", (job_id,)) if job_id \
-        else db.query(sql + " ORDER BY g.id DESC")
+    if not job_id:
+        return json_response(db.query(sql + " ORDER BY g.id DESC"))
+    rows = db.query(sql.replace("g.created_at,", "g.created_at, g.content,") + " WHERE g.job_id = ? ORDER BY g.id DESC",
+                    (job_id,))
+    for r in rows:  # one job's few resumes: cheap enough to score on the fly
+        r["score"] = check_resume(db, r)["score"]
+        del r["content"]
     return json_response(rows)
 
 
@@ -1112,10 +1120,7 @@ def generated_create(req, job_id):
 @route("GET", r"/api/generated/(\d+)")
 def generated_get(req, gid):
     db, _ = backend()
-    rows = db.query("SELECT * FROM generated_resumes WHERE id = ?", (gid,))
-    if not rows:
-        raise ApiError(404, "Resume not found")
-    return json_response(rows[0])
+    return json_response(find_generated(db, gid))
 
 
 @route("PUT", r"/api/generated/(\d+)")
@@ -1129,8 +1134,63 @@ def generated_update(req, gid):
 @route("DELETE", r"/api/generated/(\d+)")
 def generated_delete(req, gid):
     db, _ = backend()
-    db.execute("DELETE FROM generated_resumes WHERE id = ?", (gid,))
+    db.run_many([("DELETE FROM resume_reviews WHERE generated_id = ?", (gid,)),
+                 ("DELETE FROM generated_resumes WHERE id = ?", (gid,))])
     return json_response({"ok": True})
+
+
+def find_generated(db, gid):
+    rows = db.query("SELECT * FROM generated_resumes WHERE id = ?", (gid,))
+    if not rows:
+        raise ApiError(404, "Resume not found")
+    return rows[0]
+
+
+def content_hash(content):
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+def check_resume(db, doc):
+    """Keyword and format scores for a tailored resume (no AI, so it's instant and free)."""
+    job = db.query("SELECT id, company, title, description FROM jobs WHERE id = ?", (doc["job_id"],)) \
+        if doc["job_id"] else []
+    job = job[0] if job else {}
+    return {**scoring.score_resume(doc["content"], job.get("description", ""), db.get_setting("profile") or "",
+                                   job.get("company", "")),
+            "job_id": job.get("id"), "has_description": bool((job.get("description") or "").strip())}
+
+
+def saved_review(db, doc):
+    rows = db.query("SELECT * FROM resume_reviews WHERE generated_id = ?", (doc["id"],))
+    if not rows:
+        return None
+    return {**json.loads(rows[0]["result"]), "created_at": rows[0]["created_at"],
+            "stale": rows[0]["content_hash"] != content_hash(doc["content"])}
+
+
+@route("GET", r"/api/generated/(\d+)/check")
+def generated_check(req, gid):
+    db, _ = backend()
+    doc = find_generated(db, gid)
+    return json_response({**check_resume(db, doc), "review": saved_review(db, doc),
+                          "has_ai": bool(ai_config(db).get("api_key"))})
+
+
+@route("POST", r"/api/generated/(\d+)/review")
+def generated_review(req, gid):
+    db, _ = backend()
+    doc = find_generated(db, gid)
+    job = db.query("SELECT * FROM jobs WHERE id = ?", (doc["job_id"],)) if doc["job_id"] else []
+    try:
+        result = ai.review_resume(ai_config(db), db.get_setting("profile") or "", job[0] if job else {},
+                                  doc["content"])
+    except ai.AIError as e:
+        raise ApiError(400, str(e)) from None
+    db.execute("INSERT INTO resume_reviews (generated_id, content_hash, result, created_at) VALUES (?, ?, ?, ?) "
+               "ON CONFLICT(generated_id) DO UPDATE SET content_hash = excluded.content_hash, "
+               "result = excluded.result, created_at = excluded.created_at",
+               (doc["id"], content_hash(doc["content"]), json.dumps(result), now()))
+    return json_response(saved_review(db, doc))
 
 
 @route("GET", r"/resume/(\d+)", public=True)
@@ -1205,12 +1265,40 @@ def mcp_tools(db, origin):
             raise mcp.ToolError(f"No tailored resume with id {resume_id}")
         return rows[0]
 
+    def check_summary(gid):
+        report = check_resume(db, find_generated(db, gid))
+        kw, label = report["keywords"], lambda ks: [k["label"] for k in ks]
+        return {
+            "score": report["score"],
+            "keyword_match": kw and {"score": kw["score"], "matched": label(kw["matched"]),
+                                     "missing_but_in_profile": label(kw["in_profile"]),
+                                     "missing_not_in_profile": label(kw["gaps"])},
+            "format": {"score": report["format"]["score"],
+                       "issues": [f"{c['label']}: {c['detail']}" for c in report["format"]["checks"]
+                                  if c["status"] != "pass"]},
+        }
+
     def save_tailored_resume(job_id, content, title=""):
         try:
             gid = save_generated(db, int(job_id), content, title, source="claude")
         except ApiError as e:
             raise mcp.ToolError(e.message) from None
-        return {"id": gid, "open_to_print_as_pdf": f"{origin}/resume/{gid}"}
+        return {"id": gid, "open_to_print_as_pdf": f"{origin}/resume/{gid}", "check": check_summary(gid)}
+
+    def check_tailored_resume(resume_id):
+        try:
+            return check_summary(resume_id)
+        except ApiError as e:
+            raise mcp.ToolError(e.message) from None
+
+    def update_tailored_resume(resume_id, content):
+        if not db.query("SELECT 1 FROM generated_resumes WHERE id = ?", (resume_id,)):
+            raise mcp.ToolError(f"No tailored resume with id {resume_id}")
+        if not str(content).strip():
+            raise mcp.ToolError("content is empty")
+        db.execute("UPDATE generated_resumes SET content = ? WHERE id = ?", (str(content).strip(), resume_id))
+        return {"id": resume_id, "open_to_print_as_pdf": f"{origin}/resume/{resume_id}",
+                "check": check_summary(resume_id)}
 
     def change_job(job_id, status=None, note=None):
         rows = db.query("SELECT * FROM jobs WHERE id = ?", (job_id,))
@@ -1248,6 +1336,14 @@ def mcp_tools(db, origin):
                  + ai.RESUME_FORMAT,
                  {"job_id": int_id, "content": {"type": "string"}, "title": {"type": "string"}},
                  ["job_id", "content"], save_tailored_resume),
+        mcp.Tool("check_tailored_resume", "Score a saved tailored resume: keyword match against the job "
+                 "description (matched, missing-but-in-profile, missing-and-not-in-profile) and format checks. "
+                 "Add missing keywords only when the profile supports them; never add the ones not in the profile.",
+                 {"resume_id": {"type": "integer"}}, ["resume_id"], check_tailored_resume),
+        mcp.Tool("update_tailored_resume", "Replace a saved tailored resume's Markdown (same format as "
+                 "save_tailored_resume), e.g. after acting on check_tailored_resume. Returns the new check.",
+                 {"resume_id": {"type": "integer"}, "content": {"type": "string"}},
+                 ["resume_id", "content"], update_tailored_resume),
         mcp.Tool("update_job", "Change a job's status and/or append a note.",
                  {"job_id": int_id, "status": {"type": "string", "enum": STATUSES}, "note": {"type": "string"}},
                  ["job_id"], change_job),
@@ -1256,8 +1352,10 @@ def mcp_tools(db, origin):
 
 MCP_INSTRUCTIONS = ("Job Tracker holds the user's job applications, saved job descriptions, their master profile, "
                     "and tailored resumes. To tailor a resume: call get_profile and get_job, write the resume "
-                    "using only facts from the profile, then save it with save_tailored_resume and give the user "
-                    "the returned link (they print it to PDF from there).")
+                    "using only facts from the profile, then save it with save_tailored_resume. Its result includes "
+                    "a keyword and format check: if keywords the profile supports are missing, or format checks "
+                    "fail, fix them with update_tailored_resume. Then give the user the returned link (they "
+                    "print it to PDF from there).")
 
 
 @route("POST", r"/mcp", public=True)

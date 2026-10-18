@@ -224,3 +224,70 @@ def system_prompt(profile, instructions, job, resume_label=""):
         url=job.get("url") or "", resume=resume_label or "none recorded",
         description=job.get("description") or "(No job description saved for this job.)",
     )
+
+
+REVIEW_PROMPT = """You review a tailored resume before a candidate sends it. Do two jobs and reply with \
+JSON only (no Markdown fence, no other text).
+
+1. Fact check. Compare every claim in the resume (employers, titles, dates, degrees, \
+certifications, skills, tools, numbers, scope such as "led a team of 8") with the candidate \
+profile. List each claim the profile does not support, or that overstates what it says. \
+Rewording and emphasis are fine; new facts, inflated numbers, and skills the profile never \
+mentions are not. If everything is supported, return an empty list.
+
+2. Recruiter's view. Read the resume as the recruiter for this job would on a first, quick pass.
+
+JSON shape:
+{{
+  "unsupported": [{{"claim": "the resume's words, quoted", "problem": "what the profile actually says, or that it says nothing", "fix": "an honest rewrite, or 'remove'"}}],
+  "fit": 1-10 (how strong a match the resume presents for this job),
+  "verdict": "one sentence a recruiter would think after a 10-second skim",
+  "strengths": ["up to 3 short points"],
+  "weaknesses": [{{"issue": "up to 3 biggest problems for this job", "fix": "a concrete change that stays true to the profile"}}]
+}}
+
+<candidate_profile>
+{profile}
+</candidate_profile>
+
+<job>
+Title: {title}
+Company: {company}
+
+{description}
+</job>"""
+
+
+def _json_object(text):
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        raise AIError("The AI's review wasn't in the expected format. Try again.")
+    try:
+        return json.loads(text[start:end + 1])
+    except ValueError:
+        raise AIError("The AI's review wasn't in the expected format. Try again.") from None
+
+
+def review_resume(config, profile, job, resume):
+    """Fact-check a resume against the profile and give a recruiter's first impression."""
+    if not profile.strip():
+        raise AIError("Fill in your Profile tab first. The fact check compares the resume against it.")
+    system = REVIEW_PROMPT.format(profile=profile.strip(), title=job.get("title") or "",
+                                  company=job.get("company") or "",
+                                  description=job.get("description") or "(No job description saved.)")
+    data = _json_object(complete(config, system, [{"role": "user", "content": f"<resume>\n{resume}\n</resume>"}],
+                                 max_tokens=8000))
+    as_list = lambda v: v if isinstance(v, list) else []
+    try:
+        fit = max(1, min(10, int(data.get("fit"))))
+    except (TypeError, ValueError):
+        fit = None
+    return {
+        "unsupported": [{k: str(c.get(k, "")) for k in ("claim", "problem", "fix")}
+                        for c in as_list(data.get("unsupported")) if isinstance(c, dict) and c.get("claim")],
+        "fit": fit,
+        "verdict": str(data.get("verdict") or ""),
+        "strengths": [str(s) for s in as_list(data.get("strengths"))][:3],
+        "weaknesses": [{k: str(w.get(k, "")) for k in ("issue", "fix")}
+                       for w in as_list(data.get("weaknesses")) if isinstance(w, dict) and w.get("issue")][:3],
+    }
