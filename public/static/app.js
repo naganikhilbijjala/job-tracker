@@ -55,16 +55,71 @@ function addDays(iso, n) {
 const followUpDue = (j) => ACTIVE.has(j.status) && j.follow_up && j.follow_up <= todayISO();
 
 let toastTimer;
-function toast(msg, isError = false) {
+// action: optional { label, run } shown as a button in the toast, e.g. Undo.
+function toast(msg, isError = false, action = null, ms = isError ? 5000 : 2500) {
   const t = $("#toast");
-  t.textContent = msg;
+  const btn = $("#toast-action");
+  $("#toast-text").textContent = msg;
+  btn.hidden = !action;
+  btn.textContent = action?.label || "";
+  btn.onclick = action && (() => { t.className = ""; action.run(); });
   t.className = "show" + (isError ? " error" : "");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.className = ""), isError ? 5000 : 2500);
+  toastTimer = setTimeout(() => (t.className = ""), ms);
 }
 
-async function api(path, { method = "GET", json, file, headers = {} } = {}) {
-  const opts = { method, headers: { "X-Today": todayISO(), ...headers } };
+// In-page replacement for confirm() and prompt(). Resolves true/false, or the typed text / null with `input`.
+function ask({ title, body = "", ok = "OK", danger = false, input = null }) {
+  const dlg = $("#dialog");
+  const field = $("#dialog-input");
+  $("#dialog-title").textContent = title;
+  $("#dialog-body").textContent = body;
+  $("#dialog-body").hidden = !body;
+  field.hidden = !input;
+  if (input) Object.assign(field, { type: "text", inputMode: "", placeholder: "", value: "", ...input });
+  $("#dialog-ok").textContent = ok;
+  $("#dialog-ok").className = danger ? "danger-fill" : "primary";
+  dlg.returnValue = "";
+  dlg.showModal();
+  (input ? field : danger ? $("#dialog-cancel") : $("#dialog-ok")).focus();
+  return new Promise((resolve) => dlg.addEventListener("close", () => {
+    const yes = dlg.returnValue === "ok";
+    resolve(input ? (yes ? field.value : null) : yes);
+  }, { once: true }));
+}
+$("#dialog-cancel").addEventListener("click", () => $("#dialog").close());
+$("#dialog").addEventListener("click", (e) => { if (e.target === $("#dialog")) $("#dialog").close(); }); // backdrop
+
+// Theme: "system" follows the device; "light" or "dark" is remembered on this device.
+function themeChoice() {
+  try { return localStorage.getItem("theme") || "system"; } catch { return "system"; }
+}
+function setTheme(choice) {
+  try { choice === "system" ? localStorage.removeItem("theme") : localStorage.setItem("theme", choice); } catch {}
+  if (choice === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = choice;
+  syncThemeButtons();
+}
+const isDark = () => document.documentElement.dataset.theme === "dark" ||
+  (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+function syncThemeButtons() {
+  $("#landing-theme").setAttribute("aria-label", isDark() ? "Switch to light mode" : "Switch to dark mode");
+  $$("[data-theme-choice]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.themeChoice === themeChoice()));
+}
+$("#landing-theme").addEventListener("click", () => setTheme(isDark() ? "light" : "dark"));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncThemeButtons);
+syncThemeButtons();
+
+// A coloured initial for a company, standing in for its logo. Same name, same colour.
+function avatarHTML(name, cls = "") {
+  const s = String(name || "?").trim();
+  let h = 0;
+  for (const c of s.toLowerCase()) h = (h * 31 + c.codePointAt(0)) % 360;
+  return `<span class="avatar ${cls}" style="--h:${h}" aria-hidden="true">${esc([...s][0]?.toUpperCase() || "?")}</span>`;
+}
+
+async function api(path, { method = "GET", json, file, headers = {}, keepalive = false } = {}) {
+  const opts = { method, keepalive, headers: { "X-Today": todayISO(), ...headers } };
   if (json !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(json);
@@ -88,6 +143,56 @@ function matchesSearch(j) {
 
 const statusOptions = (cur) => state.meta.statuses
   .map((s) => `<option value="${s}" ${s === cur ? "selected" : ""}>${STATUS_LABELS[s]}</option>`).join("");
+
+// ------------------------------------------------------------ account menu
+
+function renderAccount() {
+  const { user, auth = {} } = state.meta;
+  const who = user?.name || user?.email || "";
+  $("#account-btn").innerHTML = who
+    ? esc([...who][0].toUpperCase())
+    : `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`;
+  $("#account-btn").title = who || "Settings";
+  const choice = (v, label) => `<button type="button" data-theme-choice="${v}">${label}</button>`;
+  $("#account-menu").innerHTML = `
+    ${user ? `<div class="menu-head"><b>${esc(user.name || user.email)}</b>${user.name ? `<span>${esc(user.email)}</span>` : ""}</div>` : ""}
+    <div class="menu-label">Theme</div>
+    <div class="seg" role="group" aria-label="Theme">${choice("system", "System")}${choice("light", "Light")}${choice("dark", "Dark")}</div>
+    <hr>
+    <button type="button" class="menu-item" role="menuitem" data-goto="profile">Profile &amp; AI settings</button>
+    <button type="button" class="menu-item" role="menuitem" data-goto="resumes">Resumes &amp; extension</button>
+    ${auth.required ? `<hr><button type="button" class="menu-item" role="menuitem" id="logout">Log out</button>` : ""}`;
+  syncThemeButtons();
+}
+
+function toggleMenu(open = $("#account-menu").hidden) {
+  $("#account-menu").hidden = !open;
+  $("#account-btn").setAttribute("aria-expanded", open);
+}
+
+$("#account-btn").addEventListener("click", () => toggleMenu());
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".account")) toggleMenu(false);
+});
+$("#account-menu").addEventListener("click", async (e) => {
+  const t = e.target.closest("button");
+  if (!t) return;
+  if (t.dataset.themeChoice) return setTheme(t.dataset.themeChoice);
+  toggleMenu(false);
+  if (t.dataset.goto) {
+    state.view = t.dataset.goto;
+    history.replaceState(null, "", "#" + state.view);
+    render();
+  } else if (t.id === "logout") {
+    try {
+      flushDelete();
+      await api("/api/logout", { method: "POST" });
+      location.replace("/");
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+});
 
 // ------------------------------------------------------------ login
 
@@ -184,6 +289,7 @@ $("#login-form").addEventListener("submit", async (e) => {
 
 async function loadAll() {
   [state.jobs, state.resumes] = await Promise.all([api("/api/jobs"), api("/api/resumes")]);
+  state.jobs = withoutPending(state.jobs);
   render();
 }
 
@@ -250,23 +356,36 @@ function cardHTML(j) {
   if (followUpDue(j)) meta.push(`<span class="chip warn">Follow up</span>`);
   if (j.resume_label) meta.push(`<span class="chip" title="Resume used">📄 ${esc(j.resume_label)}</span>`);
   return `<div class="card" draggable="true" data-id="${j.id}">
-    <div class="title">${esc(j.title || "Untitled role")}</div>
-    <div class="company">${esc(j.company)}</div>
+    <div class="card-top">${avatarHTML(j.company)}<div>
+      <div class="title">${esc(j.title || "Untitled role")}</div>
+      <div class="company">${esc(j.company)}</div>
+    </div></div>
     <div class="meta">${meta.join("")}</div>
     <select class="move" data-status-for="${j.id}" aria-label="Move to">${statusOptions(j.status)}</select>
   </div>`;
 }
 
+// Shown above the board until the first job is added.
+const WELCOME = `<div class="welcome">
+  <div><h2>Welcome to your job tracker</h2>
+    <p>Add the jobs you're applying to and follow each one from saved to offer.</p>
+    <button type="button" class="primary" id="welcome-add">+ Add your first job</button></div>
+  <ol>
+    <li><i>1</i><b>Save a job</b>Paste a posting's link and the details fill in.</li>
+    <li><i>2</i><b>Add your profile</b>Your full resume on the <a href="#profile" data-goto="profile">Profile</a> tab.</li>
+    <li><i>3</i><b>Tailor a resume</b>Open a job and use ✨ Assistant with your AI key.</li>
+  </ol></div>`;
+
 function renderBoard() {
   const jobs = state.jobs.filter(matchesSearch);
-  $("#view-board").innerHTML = state.meta.statuses.map((s) => {
+  $("#view-board").innerHTML = (state.jobs.length ? "" : WELCOME) + `<div class="columns">` + state.meta.statuses.map((s) => {
     const col = jobs.filter((j) => j.status === s);
     return `<div class="column" data-status="${s}">
       <div class="column-head"><span class="dot" style="background:var(--s-${s})"></span>
         ${STATUS_LABELS[s]} <span class="count">${col.length}</span></div>
       ${col.map(cardHTML).join("") || `<div class="empty">${s === "saved" ? "Jobs you want to apply to" : "Nothing here yet"}</div>`}
     </div>`;
-  }).join("");
+  }).join("") + `</div>`;
 }
 
 const COLUMNS = [
@@ -291,9 +410,9 @@ function renderTable() {
     <thead><tr>${COLUMNS.map(([k, l]) =>
       `<th data-key="${k}" class="${k === key ? "sorted" + (dir > 0 ? " asc" : "") : ""}">${l}</th>`).join("")}</tr></thead>
     <tbody>${jobs.map((j) => `<tr data-id="${j.id}">
-      ${cell("Company", `<b>${esc(j.company)}</b>`, "company")}
+      ${cell("Company", `<span>${avatarHTML(j.company, "sm")}<b>${esc(j.company)}</b></span>`, "company")}
       ${cell("Title", esc(j.title), "wrap title")}
-      ${cell("Status", `<select data-status-for="${j.id}">${statusOptions(j.status)}</select>`, "status")}
+      ${cell("Status", `<select class="status-pill" style="--c:var(--s-${j.status})" data-status-for="${j.id}" aria-label="Status">${statusOptions(j.status)}</select>`, "status")}
       ${cell("Applied", fmtDate(j.date_applied))}
       ${cell("Follow up", followUpDue(j) ? `<span class="chip warn">${fmtDate(j.follow_up)}</span>` : fmtDate(j.follow_up))}
       ${cell("Resume", esc(j.resume_label || ""))}
@@ -365,14 +484,10 @@ function renderResumes() {
     ? `<h3>Browser extension</h3>
        <p class="muted small">In the extension's setup, use this address and a connection code:</p>
        <code class="copy">${esc(origin)}</code>
-       <div id="ext-code" class="row"><button id="make-code">Get connection code</button></div>
-       <h3 style="margin-top:16px">Account</h3>
-       <p class="muted small">Signed in as ${esc(user.email)}</p>
-       <div class="row"><button id="logout">Log out</button></div>`
+       <div id="ext-code" class="row"><button id="make-code">Get connection code</button></div>`
     : `<h3>Browser extension</h3>
        <p class="muted small">In the extension's setup, use this address${state.meta.auth.required ? " and your tracker password" : ""}:</p>
-       <code class="copy">${esc(origin)}</code>
-       ${state.meta.auth.required ? `<div class="row"><button id="logout">Log out</button></div>` : ""}`;
+       <code class="copy">${esc(origin)}</code>`;
 }
 
 // ------------------------------------------------------------ drawer
@@ -464,17 +579,50 @@ form.addEventListener("submit", async (ev) => {
   }
 });
 
-$("#delete-job").addEventListener("click", async () => {
-  if (!state.editingId || !confirm("Delete this job? This can't be undone.")) return;
-  try {
-    await api(`/api/jobs/${state.editingId}`, { method: "DELETE" });
-    state.jobs = state.jobs.filter((j) => j.id !== state.editingId);
-    closeDrawer();
+// Deleting a job hides it at once and offers Undo; the server delete happens when the toast ends.
+let pendingDelete = null; // { job, index, timer }
+
+function deleteJob(id) {
+  flushDelete();
+  const index = state.jobs.findIndex((j) => j.id === id);
+  if (index < 0) return;
+  const job = state.jobs[index];
+  state.jobs.splice(index, 1);
+  pendingDelete = { job, index, timer: setTimeout(flushDelete, 6000) };
+  render();
+  toast(`Deleted “${job.title || job.company}”`, false, { label: "Undo", run: undoDelete }, 6000);
+}
+
+function undoDelete() {
+  if (!pendingDelete) return;
+  const { job, index, timer } = pendingDelete;
+  clearTimeout(timer);
+  pendingDelete = null;
+  state.jobs.splice(Math.min(index, state.jobs.length), 0, job);
+  render();
+  toast("Restored");
+}
+
+function flushDelete() {
+  if (!pendingDelete) return;
+  const { job, timer } = pendingDelete;
+  clearTimeout(timer);
+  pendingDelete = null;
+  api(`/api/jobs/${job.id}`, { method: "DELETE", keepalive: true }).catch((e) => {
+    upsertJob(job);
     render();
-    toast("Deleted");
-  } catch (e) {
-    toast(e.message, true);
-  }
+    toast(`Couldn't delete: ${e.message}`, true);
+  });
+}
+// Lists fetched while a delete is waiting shouldn't bring the job back.
+const withoutPending = (jobs) => jobs.filter((j) => j.id !== pendingDelete?.job.id);
+addEventListener("pagehide", flushDelete);
+
+$("#delete-job").addEventListener("click", () => {
+  const id = state.editingId;
+  if (!id) return;
+  closeDrawer();
+  deleteJob(id);
 });
 
 $("#drawer-resume-file").addEventListener("change", async (ev) => {
@@ -518,8 +666,11 @@ $("#search").addEventListener("input", (e) => { state.search = e.target.value.tr
 $("#add-job").addEventListener("click", () => openDrawer());
 
 document.addEventListener("keydown", (e) => {
+  if ($("#dialog").open) return;  // the dialog handles its own keys
+  if (e.key === "Escape" && !$("#account-menu").hidden) return toggleMenu(false);
   if (e.key === "Escape" && $("#drawer").classList.contains("open")) closeDrawer();
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (!typing && pendingDelete && e.key === "z" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); return undoDelete(); }
   if (typing || e.ctrlKey || e.metaKey || $("#app").hidden) return;
   if (e.key === "n") { e.preventDefault(); openDrawer(); }
   if (e.key === "/") { e.preventDefault(); $("#search").focus(); }
@@ -534,6 +685,14 @@ document.addEventListener("change", (e) => {
 // board: click + drag and drop (desktop); phones use the dropdown on each card
 const board = $("#view-board");
 board.addEventListener("click", (e) => {
+  if (e.target.closest("#welcome-add")) return openDrawer();
+  const go = e.target.closest("[data-goto]");
+  if (go) {
+    e.preventDefault();
+    state.view = go.dataset.goto;
+    history.replaceState(null, "", "#" + state.view);
+    return render();
+  }
   if (e.target.closest("select")) return;
   const card = e.target.closest(".card");
   if (card) openDrawer(Number(card.dataset.id));
@@ -607,6 +766,7 @@ $("#view-resumes").addEventListener("change", async (e) => {
   try {
     await api(`/api/resumes/${id}`, { method: "PUT", json: { label: e.target.value } });
     [state.resumes, state.jobs] = await Promise.all([api("/api/resumes"), api("/api/jobs")]);
+    state.jobs = withoutPending(state.jobs);
     toast("Renamed");
   } catch (err) {
     toast(err.message, true);
@@ -618,9 +778,11 @@ $("#view-resumes").addEventListener("click", async (e) => {
   try {
     if (t.dataset.deleteResume) {
       const r = state.resumes.find((x) => x.id === Number(t.dataset.deleteResume));
-      if (!confirm(`Delete “${r.label}” and its file? (Jobs that used it keep their history.)`)) return;
+      if (!await ask({ title: `Delete “${r.label}”?`, body: "The file is deleted too. Jobs that used it keep their history.",
+                       ok: "Delete resume", danger: true })) return;
       await api(`/api/resumes/${r.id}`, { method: "DELETE" });
       [state.resumes, state.jobs] = await Promise.all([api("/api/resumes"), api("/api/jobs")]);
+      state.jobs = withoutPending(state.jobs);
       toast("Deleted");
     } else if (t.dataset.drive) {
       t.disabled = true;
@@ -634,12 +796,9 @@ $("#view-resumes").addEventListener("click", async (e) => {
       state.resumes = await api("/api/resumes");
       toast(res.errors.length ? res.errors[0] : `Uploaded ${res.uploaded} to Drive`, res.errors.length > 0);
     } else if (t.id === "drive-disconnect") {
-      if (!confirm("Disconnect Google Drive? Files already in Drive stay there.")) return;
+      if (!await ask({ title: "Disconnect Google Drive?", body: "Files already in your Drive stay there.", ok: "Disconnect" })) return;
       await api("/api/drive/disconnect", { method: "POST" });
       state.meta = await api("/api/meta");
-    } else if (t.id === "logout") {
-      await api("/api/logout", { method: "POST" });
-      return showLogin();
     } else if (t.id === "make-code") {
       const { code } = await api("/api/extension-code", { method: "POST" });
       $("#ext-code").outerHTML = `<code class="copy">${esc(code)}</code>
@@ -675,38 +834,84 @@ async function loadProfile() {
   }
 }
 
+let aiConfig = { saved: {} };  // what the server has saved, per provider (keys themselves never come back)
+
 function renderAiPanel(config) {
+  aiConfig = config;
   const options = Object.entries(aiProviders)
     .map(([k, p]) => `<option value="${k}" ${k === config.provider ? "selected" : ""}>${esc(p.label)}</option>`).join("");
   $("#ai-panel").innerHTML = `
     <h3>AI provider</h3>
-    <p class="muted small">Used by the ✨ Assistant in each job. You pay the provider directly; the key is stored in your tracker's database and never sent back to the browser.</p>
+    <p class="muted small">Used by the ✨ Assistant in each job. You pay the provider directly; keys are stored in your tracker's database and never sent back to the browser.</p>
     <form id="ai-form">
       <label class="field">Provider<select name="provider">${options}</select></label>
+      <label class="field">API key <a id="key-link" class="key-link small" target="_blank" rel="noopener">Get a key ↗</a>
+        <input name="api_key" type="password" autocomplete="off"></label>
+      <label class="field" id="base-url-field">Base URL<input name="base_url" inputmode="url"></label>
       <label class="field">Model
         <div class="row">
           <select id="model-select" hidden></select>
-          <input name="model" value="${esc(config.model)}" placeholder="Model ID from the provider's docs">
-          <button type="button" id="load-models" title="Load the models your key can use">↻ Models</button>
+          <input name="model" placeholder="Model ID from the provider's docs">
+          <button type="button" id="load-models" title="Reload the model list" aria-label="Reload the model list">↻</button>
         </div>
         <span id="model-status" class="muted small"></span>
       </label>
-      <label class="field" id="base-url-field">Base URL<input name="base_url" value="${esc(config.base_url)}" placeholder=""></label>
-      <label class="field">API key<input name="api_key" type="password" autocomplete="off"
-        placeholder="${config.has_key ? `Saved (${esc(config.key_hint)}) — leave blank to keep` : "Paste your API key"}"></label>
       <div class="row"><button type="submit" class="primary">Save</button><button type="button" id="ai-test">Test</button></div>
     </form>`;
-  syncProviderFields(false);
-  if (config.has_key) loadModels();
+  applyProvider(config.provider);
 }
 
+// Fill the form with what's saved for this provider, then load its models if there's a key.
+function applyProvider(provider) {
+  const f = $("#ai-form");
+  const p = aiProviders[provider] || {};
+  const saved = aiConfig.saved?.[provider] || {};
+  f.api_key.value = "";
+  f.api_key.placeholder = saved.has_key
+    ? `Saved${saved.key_hint ? ` (${saved.key_hint})` : ""}. Leave blank to keep it`
+    : `Paste your ${p.label || ""} API key`;
+  f.base_url.value = saved.base_url || "";
+  f.base_url.placeholder = p.base_url || "https://…/v1";
+  $("#base-url-field").hidden = provider !== "custom" && !f.base_url.value;
+  f.model.value = saved.model || p.model || "";
+  $("#key-link").href = p.keys_url || "#";
+  $("#key-link").hidden = !p.keys_url;
+  loadModels();
+}
+
+function setModelStatus(text, isError = false) {
+  $("#model-status").textContent = text;
+  $("#model-status").classList.toggle("error", isError);
+}
+
+function showModelInput() {
+  $("#model-select").hidden = true;
+  $("#ai-form").model.hidden = false;
+}
+
+let modelsRequest = 0;  // only the latest request may update the list (the provider can change mid-request)
 async function loadModels() {
   const f = $("#ai-form");
-  const select = $("#model-select");
-  const status = $("#model-status");
-  status.textContent = "Loading models…";
+  const provider = f.provider.value;
+  const key = f.api_key.value.trim();
+  const n = ++modelsRequest;
+  if (!key && !aiConfig.saved?.[provider]?.has_key) {
+    showModelInput();
+    return setModelStatus("Add your API key and the models it can use show up here.");
+  }
+  if (provider === "custom" && !f.base_url.value.trim()) {
+    showModelInput();
+    return setModelStatus("Add the server's base URL to load its models.");
+  }
+  setModelStatus("Loading models…");
   try {
-    const models = await api("/api/ai/models");
+    const models = await api("/api/ai/models", { method: "POST", json: { provider, api_key: key, base_url: f.base_url.value } });
+    if (n !== modelsRequest) return;
+    if (!models.length) {
+      showModelInput();
+      return setModelStatus("The provider didn't list any chat models. Type a model ID instead.");
+    }
+    const select = $("#model-select");
     const current = f.model.value;
     const options = models.map((m) => `<option value="${esc(m.id)}">${esc(m.name && m.name !== m.id ? `${m.name} — ${m.id}` : m.id)}</option>`);
     if (current && !models.some((m) => m.id === current)) options.unshift(`<option value="${esc(current)}">${esc(current)}</option>`);
@@ -715,20 +920,12 @@ async function loadModels() {
     select.value = current;
     select.hidden = false;
     f.model.hidden = true;
-    status.textContent = `${models.length} models available with your key`;
+    setModelStatus(`${models.length} models available with ${key ? "this" : "your saved"} key`);
   } catch (e) {
-    select.hidden = true;
-    f.model.hidden = false;
-    status.textContent = e.message;
+    if (n !== modelsRequest) return;
+    showModelInput();
+    setModelStatus(`${e.message} You can still type a model ID.`, true);
   }
-}
-
-function syncProviderFields(providerChanged) {
-  const f = $("#ai-form");
-  const p = aiProviders[f.provider.value] || {};
-  $("#base-url-field").hidden = f.provider.value !== "custom" && !f.base_url.value;
-  f.base_url.placeholder = p.base_url || "https://…/v1";
-  if (providerChanged) f.model.value = p.model || "";
 }
 
 async function saveAi() {
@@ -761,12 +958,9 @@ document.addEventListener("submit", async (e) => {
   try { await saveAi(); toast("AI settings saved"); } catch (err) { toast(err.message, true); }
 });
 document.addEventListener("change", (e) => {
-  if (e.target.name === "provider" && e.target.closest("#ai-form")) {
-    syncProviderFields(true);
-    // The model list belongs to the old provider; save, then load again.
-    $("#model-select").hidden = true;
-    $("#ai-form").model.hidden = false;
-    $("#model-status").textContent = "Save, then click ↻ Models to pick from the list.";
+  if (e.target.closest("#ai-form")) {
+    if (e.target.name === "provider") applyProvider(e.target.value);
+    if (e.target.name === "api_key" || e.target.name === "base_url") loadModels();
   }
   if (e.target.id === "model-select") {
     const input = $("#ai-form").model;
@@ -776,10 +970,14 @@ document.addEventListener("change", (e) => {
     if (other) input.focus();
   }
 });
+// A pasted key loads the models straight away, without waiting for the field to lose focus.
+document.addEventListener("paste", (e) => {
+  if (e.target.name === "api_key" && e.target.closest("#ai-form")) setTimeout(loadModels);
+});
 $("#view-profile").addEventListener("click", async (e) => {
   try {
     if (e.target.id === "load-models") {
-      await saveAi();  // uses the key just typed, if any
+      loadModels();
     } else if (e.target.id === "ai-test") {
       e.target.disabled = true;
       e.target.textContent = "Testing…";
@@ -787,7 +985,8 @@ $("#view-profile").addEventListener("click", async (e) => {
       const { reply } = await api("/api/ai/test", { method: "POST" });
       toast(`Connected ✓ — the model replied “${reply}”`);
     } else if (e.target.id === "mcp-rotate") {
-      if (!confirm("Make a new token? Claude apps using the old one will stop working until you update them.")) return;
+      if (!await ask({ title: "Make a new token?", body: "Claude apps using the old token stop working until you update them.",
+                       ok: "Make new token", danger: true })) return;
       renderMcpPanel(await api("/api/mcp/rotate", { method: "POST" }));
       toast("New token created");
     } else if (e.target.id === "save-profile") {
@@ -930,12 +1129,13 @@ $("#assistant").addEventListener("click", async (e) => {
       if (win) win.location = url; else location.href = url;
       loadAssistant();
     } else if (t.dataset.deleteTailored) {
-      if (!confirm("Delete this tailored resume?")) return;
+      if (!await ask({ title: "Delete this tailored resume?", body: "Its saved page and score are removed.", ok: "Delete", danger: true })) return;
       await api(`/api/generated/${t.dataset.deleteTailored}`, { method: "DELETE" });
       loadAssistant();
     } else if (t.id === "clear-chat") {
       e.preventDefault();
-      if (!confirm("Clear this job's chat history?")) return;
+      if (!await ask({ title: "Clear this chat?", body: "The conversation for this job is deleted. Tailored resumes you saved stay.",
+                       ok: "Clear chat", danger: true })) return;
       await api(`/api/jobs/${state.editingId}/chat`, { method: "DELETE" });
       chat = [];
       loadAssistant();
@@ -1006,16 +1206,19 @@ $("#view-users").addEventListener("click", async (e) => {
   if (!t) return;
   try {
     if (t.dataset.limit) {
-      const answer = prompt("How many jobs can this person save? Leave empty for the default.", t.dataset.current);
+      const answer = await ask({ title: "Change job limit", body: "How many jobs can this person save? Leave empty for the default.",
+        ok: "Save", input: { value: t.dataset.current === "null" ? "" : t.dataset.current, inputMode: "numeric" } });
       if (answer === null) return;
       const limit = answer.trim() === "" ? null : Number(answer);
       if (limit !== null && !(Number.isInteger(limit) && limit >= 0)) return toast("Enter a whole number", true);
       await api(`/api/admin/users/${t.dataset.limit}`, { method: "PUT", json: { job_limit: limit } });
     } else if (t.dataset.status) {
-      if (t.dataset.status === "blocked" && !confirm("Turn off this person's access? They're signed out everywhere right away.")) return;
+      if (t.dataset.status === "blocked" && !await ask({ title: "Turn off this person's access?",
+        body: "They're signed out everywhere right away. Their data stays until you delete it.", ok: "Turn off", danger: true })) return;
       await api(`/api/admin/users/${t.dataset.user}`, { method: "PUT", json: { status: t.dataset.status } });
     } else if (t.dataset.deleteUser) {
-      if (!confirm(`Delete ${t.dataset.email} and all their jobs, resumes and chats? This can't be undone.`)) return;
+      if (!await ask({ title: `Delete ${t.dataset.email}?`, body: "All their jobs, resumes and chats are deleted. This can't be undone.",
+                       ok: "Delete everything", danger: true })) return;
       await api(`/api/admin/users/${t.dataset.deleteUser}`, { method: "DELETE" });
     } else {
       return;
@@ -1047,6 +1250,7 @@ async function boot() {
   $("#app").hidden = false;
   const admin = !!state.meta.user?.is_admin;
   $('.tabs [data-view="users"]').hidden = !admin;
+  renderAccount();
   setLimitBadge(state.meta.user?.at_limit || 0);
   if (state.view === "users" && !admin) state.view = "board";
   await loadAll();

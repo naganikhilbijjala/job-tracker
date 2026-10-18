@@ -10,13 +10,19 @@ import time
 import urllib.error
 import urllib.request
 
+# keys_url: where to create a key, linked from the settings panel.
 PROVIDERS = {
-    "anthropic": {"label": "Anthropic (Claude)", "base_url": "https://api.anthropic.com", "model": "claude-opus-5-5"},
-    "openai": {"label": "OpenAI", "base_url": "https://api.openai.com/v1", "model": ""},
-    "gemini": {"label": "Google Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": ""},
-    "openrouter": {"label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "model": ""},
-    "groq": {"label": "Groq", "base_url": "https://api.groq.com/openai/v1", "model": ""},
-    "custom": {"label": "Other (OpenAI-compatible)", "base_url": "", "model": ""},
+    "anthropic": {"label": "Anthropic (Claude)", "base_url": "https://api.anthropic.com", "model": "claude-opus-5-5",
+                  "keys_url": "https://console.anthropic.com/settings/keys"},
+    "openai": {"label": "OpenAI", "base_url": "https://api.openai.com/v1", "model": "",
+               "keys_url": "https://platform.openai.com/api-keys"},
+    "gemini": {"label": "Google Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "",
+               "keys_url": "https://aistudio.google.com/apikey"},
+    "openrouter": {"label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "model": "",
+                   "keys_url": "https://openrouter.ai/keys"},
+    "groq": {"label": "Groq", "base_url": "https://api.groq.com/openai/v1", "model": "",
+             "keys_url": "https://console.groq.com/keys"},
+    "custom": {"label": "Other (OpenAI-compatible)", "base_url": "", "model": "", "keys_url": ""},
 }
 # Claude models that accept server-side fallback when their safety classifiers decline.
 CLAUDE_FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
@@ -111,7 +117,7 @@ NOT_CHAT = re.compile(r"embed|tts|audio|speech|transcri|whisper|image|imagen|dal
 def list_models(config):
     """Model IDs the key can use, for the settings dropdown."""
     if not config or not config.get("api_key"):
-        raise AIError("Save your API key first.")
+        raise AIError("Add your API key to load the models.")
     provider = config["provider"]
     if provider == "anthropic":
         base = (config.get("base_url") or PROVIDERS["anthropic"]["base_url"]).rstrip("/")
@@ -127,7 +133,13 @@ def list_models(config):
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as res:
             data = json.load(res)
     except urllib.error.HTTPError as e:
-        raise AIError(f"Couldn't list models ({e.code}): {_error_message(e.read().decode('utf-8', 'replace'))}") from None
+        detail = _error_message(e.read().decode("utf-8", "replace"))
+        if e.code in (401, 403):
+            label = PROVIDERS.get(provider, {}).get("label", "The provider")
+            raise AIError(f"{label} didn't accept this API key. Check it's a key for {label}. ({detail})") from None
+        if e.code == 404 and provider == "custom":
+            raise AIError("This server doesn't list its models.") from None
+        raise AIError(f"Couldn't list models ({e.code}): {detail}") from None
     except (urllib.error.URLError, TimeoutError) as e:
         raise AIError(f"Couldn't reach the provider: {getattr(e, 'reason', e)}") from None
     models = []
