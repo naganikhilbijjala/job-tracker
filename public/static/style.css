@@ -206,6 +206,18 @@ td select { width: auto; padding: 3px 6px; }
 .login-card button { width: 100%; justify-content: center; padding: 10px; }
 .error { color: var(--danger); margin: 12px 0 0; }
 
+/* users (admin) */
+.badge { background: var(--danger); color: #fff; border-radius: 999px; font-size: 11px; padding: 0 6px; margin-left: 2px; }
+#users-main h3 { font-size: 15px; margin: 4px 0 10px; }
+.warn-note { background: var(--warn-bg); color: var(--warn-text); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.pill-full { background: var(--warn-bg); color: var(--warn-text); border-radius: 999px; font-size: 11px; padding: 1px 7px; white-space: nowrap; }
+.users-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.users-table th, .users-table td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.users-table th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.users-table .actions { text-align: right; white-space: nowrap; }
+.users-table .actions button { margin-left: 4px; }
+.users-table td { line-height: 1.5; }
+
 .side { display: flex; flex-direction: column; gap: 16px; }
 code.copy { display: block; padding: 8px 10px; user-select: all; word-break: break-all; }
 
@@ -308,6 +320,17 @@ code.copy.pre { white-space: pre; overflow-x: auto; word-break: normal; font-siz
   #jobs-table td.status select { flex: 1; }
 
   .resume-grid, .grid2 { grid-template-columns: 1fr; }
+  .resume-grid > * { min-width: 0; }
+  .users-table thead { display: none; }
+  .users-table, .users-table tbody, .users-table tr, .users-table td { display: block; }
+  .users-table tr {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 8px;
+  }
+  .users-table td { border: none; padding: 2px 0; }
+  .users-table td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); }
+  .users-table .actions { text-align: left; margin-top: 4px; }
+  .users-table .actions button { margin: 0 4px 0 0; }
   .resume { flex-wrap: wrap; }
   .resume .actions { width: 100%; justify-content: flex-end; }
 

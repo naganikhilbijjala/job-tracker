@@ -91,11 +91,76 @@ const statusOptions = (cur) => state.meta.statuses
 
 // ------------------------------------------------------------ login
 
-function showLogin() {
+async function showLogin() {
   $("#app").hidden = true;
-  $("#login").hidden = false;
   closeDrawer();
+  try { state.meta = await api("/api/meta"); } catch {}
+  const { auth = {} } = state.meta;
+  const err = new URLSearchParams(location.search).get("login_error");
+  if (err) history.replaceState(null, "", "/");
+  // With Google sign-in the public landing page is the front door; the password card is for the admin.
+  if (auth.google) {
+    $("#login").hidden = true;
+    $("#landing").hidden = false;
+    $("#admin-login").hidden = !auth.password;
+    $("#landing-error").textContent = err || "";
+    $("#landing-error").hidden = !err;
+    startLanding();
+  } else {
+    showPasswordCard(err);
+  }
+}
+
+function showPasswordCard(err) {
+  $("#landing").hidden = true;
+  $("#login").hidden = false;
+  $("#back-to-landing").hidden = !state.meta.auth?.google;
+  $("#login-error").textContent = err || "";
+  $("#login-error").hidden = !err;
   $("#login-form").password.focus();
+}
+
+$("#admin-login").addEventListener("click", (e) => {
+  e.preventDefault();
+  showPasswordCard();
+});
+
+// Landing page motion: sections fade up as they scroll in; numbers count up; the extension "types".
+let landingStarted = false;
+function startLanding() {
+  if (landingStarted) return;
+  landingStarted = true;
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const play = (el) => {
+    el.classList.add("in");
+    if (still) return;
+    $$(".count", el).forEach((n) => {
+      const to = Number(n.dataset.to), t0 = performance.now();
+      const tick = (t) => {
+        const k = Math.min(1, (t - t0) / 1200);
+        n.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
+        if (k < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    $$(".typed", el).forEach((n, i) => {
+      const text = n.dataset.text;
+      n.textContent = "";
+      setTimeout(() => {
+        let k = 0;
+        const timer = setInterval(() => {
+          n.textContent = text.slice(0, ++k);
+          if (k >= text.length) clearInterval(timer);
+        }, 35);
+      }, 300 + i * 650);
+    });
+  };
+  $$(".typed").forEach((n) => (n.textContent = n.dataset.text));
+  if (still || !("IntersectionObserver" in window)) return $$("#landing .reveal").forEach(play);
+  const seen = new IntersectionObserver((entries) => entries.forEach((e) => {
+    if (e.isIntersecting) { play(e.target); seen.unobserve(e.target); }
+  }), { threshold: 0.2 });
+  $$("#landing .reveal").forEach((el) => seen.observe(el));
 }
 
 $("#login-form").addEventListener("submit", async (e) => {
@@ -154,6 +219,7 @@ function render() {
   if (state.view === "board") renderBoard();
   else if (state.view === "table") renderTable();
   else if (state.view === "profile") loadProfile();
+  else if (state.view === "users") loadUsers();
   else renderResumes();
 }
 
@@ -245,7 +311,7 @@ function fmtSize(n) {
 function renderResumes() {
   const { drive, storage, resume_dir, origin } = state.meta;
   const hosted = storage === "database";
-  $("#storage-note").innerHTML = hosted
+  $("#storage-note").innerHTML = hosted || !resume_dir
     ? "Resumes are stored in your tracker's database. Connect Google Drive to also keep copies in a Drive folder."
     : `Files live in <code>${esc(resume_dir)}</code>. Anything you copy into that folder shows up here automatically.`;
   $("#resume-list").innerHTML = state.resumes.map((r) => {
@@ -294,10 +360,19 @@ function renderResumes() {
            ${credentialStep}
          </ol>`;
 
-  $("#connect-panel").innerHTML = `<h3>Browser extension</h3>
-    <p class="muted small">In the extension's setup, use this address${state.meta.auth.required ? " and your tracker password" : ""}:</p>
-    <code class="copy">${esc(origin)}</code>
-    ${state.meta.auth.required ? `<div class="row"><button id="logout">Log out</button></div>` : ""}`;
+  const user = state.meta.user;
+  $("#connect-panel").innerHTML = user
+    ? `<h3>Browser extension</h3>
+       <p class="muted small">In the extension's setup, use this address and a connection code:</p>
+       <code class="copy">${esc(origin)}</code>
+       <div id="ext-code" class="row"><button id="make-code">Get connection code</button></div>
+       <h3 style="margin-top:16px">Account</h3>
+       <p class="muted small">Signed in as ${esc(user.email)}</p>
+       <div class="row"><button id="logout">Log out</button></div>`
+    : `<h3>Browser extension</h3>
+       <p class="muted small">In the extension's setup, use this address${state.meta.auth.required ? " and your tracker password" : ""}:</p>
+       <code class="copy">${esc(origin)}</code>
+       ${state.meta.auth.required ? `<div class="row"><button id="logout">Log out</button></div>` : ""}`;
 }
 
 // ------------------------------------------------------------ drawer
@@ -565,6 +640,11 @@ $("#view-resumes").addEventListener("click", async (e) => {
     } else if (t.id === "logout") {
       await api("/api/logout", { method: "POST" });
       return showLogin();
+    } else if (t.id === "make-code") {
+      const { code } = await api("/api/extension-code", { method: "POST" });
+      $("#ext-code").outerHTML = `<code class="copy">${esc(code)}</code>
+        <p class="muted small">Paste it into the extension's password box. It works for a year; keep it private.</p>`;
+      return;
     } else {
       return;
     }
@@ -871,11 +951,86 @@ $("#assistant").addEventListener("click", async (e) => {
   }
 });
 
+// ------------------------------------------------------------ users (admin, multi-user mode)
+
+function setLimitBadge(n) {
+  $("#limit-badge").textContent = n;
+  $("#limit-badge").hidden = !n;
+}
+
+const fmtBytes = (n) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+const atLimit = (u) => u.limit !== null && u.status === "active" && u.jobs >= u.limit;
+
+async function loadUsers() {
+  let users, defaultLimit;
+  try {
+    ({ users, default_limit: defaultLimit } = await api("/api/admin/users"));
+  } catch (e) {
+    return toast(e.message, true);
+  }
+  const full = users.filter(atLimit);
+  setLimitBadge(full.length);
+  users.sort((a, b) => atLimit(b) - atLimit(a));
+  const who = (u) => `<b>${esc(u.name || u.email)}</b>${u.name ? `<div class="muted small">${esc(u.email)}</div>` : ""}`;
+  $("#users-main").innerHTML = `
+    <h3>People</h3>
+    ${full.length ? `<p class="warn-note">${full.length === 1 ? "1 person has" : `${full.length} people have`} reached
+      their job limit and can't add more. Raise it with <b>Change limit</b>, or leave it.</p>` : ""}
+    <div class="table-wrap"><table class="users-table">
+      <thead><tr><th>Name</th><th>Access</th><th>Jobs</th><th>Files</th><th>Last sign-in</th><th></th></tr></thead>
+      <tbody>${users.map((u) => `<tr class="${atLimit(u) ? "full" : ""}">
+        <td>${who(u)}</td>
+        <td data-label="Access">${u.id === 1 ? "Admin (you)" : u.status === "active" ? "Active" : "Turned off"}</td>
+        <td data-label="Jobs">${u.jobs}${u.limit === null ? "" : ` / ${u.limit}`}${atLimit(u) ? ' <span class="pill-full">at limit</span>' : ""}</td>
+        <td data-label="Files">${u.resume_bytes ? fmtBytes(u.resume_bytes) : "—"}</td>
+        <td data-label="Last sign-in">${u.last_login ? ago(u.last_login) : "—"}</td>
+        <td class="actions">${u.id === 1 ? "" : `<button data-limit="${u.id}" data-current="${u.limit}">Change limit</button>
+          ${u.status === "active"
+            ? `<button data-user="${u.id}" data-status="blocked">Turn off</button>`
+            : `<button data-user="${u.id}" data-status="active">Turn on</button>
+               <button class="danger" data-delete-user="${u.id}" data-email="${esc(u.email)}">Delete data</button>`}`}</td>
+      </tr>`).join("")}</tbody></table></div>`;
+  const bytes = users.reduce((n, u) => n + u.resume_bytes, 0);
+  $("#users-usage").innerHTML = `<h3>Usage</h3>
+    <p class="muted small">${users.length} ${users.length === 1 ? "person" : "people"} ·
+      ${users.reduce((n, u) => n + u.jobs, 0)} jobs · ${fmtBytes(bytes)} of resume files.
+      Turso's free plan includes 5 GB.</p>
+    <h3 style="margin-top:14px">How access works</h3>
+    <p class="muted small">Anyone can sign in with Google. Each person can save up to ${defaultLimit} jobs; they
+      don't see the number until they reach it. <b>Turn off</b> signs someone out everywhere, and their data
+      stays until you delete it.</p>`;
+}
+
+$("#view-users").addEventListener("click", async (e) => {
+  const t = e.target.closest("button");
+  if (!t) return;
+  try {
+    if (t.dataset.limit) {
+      const answer = prompt("How many jobs can this person save? Leave empty for the default.", t.dataset.current);
+      if (answer === null) return;
+      const limit = answer.trim() === "" ? null : Number(answer);
+      if (limit !== null && !(Number.isInteger(limit) && limit >= 0)) return toast("Enter a whole number", true);
+      await api(`/api/admin/users/${t.dataset.limit}`, { method: "PUT", json: { job_limit: limit } });
+    } else if (t.dataset.status) {
+      if (t.dataset.status === "blocked" && !confirm("Turn off this person's access? They're signed out everywhere right away.")) return;
+      await api(`/api/admin/users/${t.dataset.user}`, { method: "PUT", json: { status: t.dataset.status } });
+    } else if (t.dataset.deleteUser) {
+      if (!confirm(`Delete ${t.dataset.email} and all their jobs, resumes and chats? This can't be undone.`)) return;
+      await api(`/api/admin/users/${t.dataset.deleteUser}`, { method: "DELETE" });
+    } else {
+      return;
+    }
+    loadUsers();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 // ------------------------------------------------------------ boot
 
 const params = new URLSearchParams(location.search);
 const hashView = location.hash.slice(1);
-if (["board", "table", "resumes", "profile"].includes(hashView)) state.view = hashView;
+if (["board", "table", "resumes", "profile", "users"].includes(hashView)) state.view = hashView;
 
 // Opened from the phone's Share menu (installed app) — pull the link out of whatever was shared.
 function sharedJob() {
@@ -888,7 +1043,12 @@ async function boot() {
   state.meta = await api("/api/meta");
   if (state.meta.auth.required && !state.meta.auth.ok) return showLogin();
   $("#login").hidden = true;
+  $("#landing").hidden = true;
   $("#app").hidden = false;
+  const admin = !!state.meta.user?.is_admin;
+  $('.tabs [data-view="users"]').hidden = !admin;
+  setLimitBadge(state.meta.user?.at_limit || 0);
+  if (state.view === "users" && !admin) state.view = "board";
   await loadAll();
   if (params.get("drive") === "connected") toast("Google Drive connected");
   if (params.get("drive_error")) toast(`Google Drive: ${params.get("drive_error")}`, true);

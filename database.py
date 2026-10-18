@@ -67,7 +67,43 @@ SCHEMA = [
          content_hash TEXT NOT NULL,
          result       TEXT NOT NULL,
          created_at   TEXT NOT NULL)""",
+    # Multi-user mode: people sign in with Google. Status is active, or blocked by the admin.
+    # job_limit is NULL for the default. User 1 is always the admin, who owns the data from before.
+    """CREATE TABLE IF NOT EXISTS users (
+         id         INTEGER PRIMARY KEY,
+         email      TEXT NOT NULL UNIQUE,
+         name       TEXT NOT NULL DEFAULT '',
+         status     TEXT NOT NULL DEFAULT 'active',
+         job_limit  INTEGER,
+         created_at TEXT NOT NULL,
+         last_login TEXT)""",
+    """CREATE TABLE IF NOT EXISTS user_settings (
+         user_id INTEGER NOT NULL,
+         key     TEXT NOT NULL,
+         value   TEXT NOT NULL,
+         PRIMARY KEY (user_id, key))""",
 ]
+
+# Settings that belong to one person (the rest of `settings` is app-wide).
+USER_SETTING_KEYS = ("profile", "ai_instructions", "ai_config", "mcp_token", "google_token", "google_folder")
+OWNED_TABLES = ("jobs", "resumes", "generated_resumes")
+
+
+def _migrate(db):
+    """Bring a database from before multi-user up to date. Safe to run every start."""
+    for table in OWNED_TABLES:
+        try:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
+        except Exception as e:  # sqlite3 and Turso both say "duplicate column name"
+            if "duplicate column" not in str(e).lower():
+                raise
+    marks = ", ".join("?" * len(USER_SETTING_KEYS))
+    db.run_many([
+        *[(f"CREATE INDEX IF NOT EXISTS {t}_user ON {t}(user_id)", ()) for t in OWNED_TABLES],
+        (f"INSERT OR IGNORE INTO user_settings (user_id, key, value) SELECT 1, key, value FROM settings "
+         f"WHERE key IN ({marks})", USER_SETTING_KEYS),
+        (f"DELETE FROM settings WHERE key IN ({marks})", USER_SETTING_KEYS),
+    ])
 
 
 class DatabaseError(Exception):
@@ -87,6 +123,7 @@ class _Database:
 
     def create_schema(self):
         self.run_many([(sql, ()) for sql in SCHEMA])
+        _migrate(self)
 
     def get_setting(self, key):
         rows = self.query("SELECT value FROM settings WHERE key = ?", (key,))
@@ -98,6 +135,36 @@ class _Database:
         else:
             self.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+
+
+class UserDB:
+    """One person's view of the database: settings are theirs, and `uid` scopes queries.
+
+    Every query on jobs, resumes or generated_resumes must still filter on user_id = db.uid
+    (or go through a find_* helper that does)."""
+
+    def __init__(self, db, uid):
+        self.db, self.uid = db, uid
+
+    def run_many(self, statements):
+        return self.db.run_many(statements)
+
+    def query(self, sql, params=()):
+        return self.db.query(sql, params)
+
+    def execute(self, sql, params=()):
+        return self.db.execute(sql, params)
+
+    def get_setting(self, key):
+        rows = self.db.query("SELECT value FROM user_settings WHERE user_id = ? AND key = ?", (self.uid, key))
+        return rows[0]["value"] if rows else None
+
+    def set_setting(self, key, value):
+        if value is None:
+            self.db.execute("DELETE FROM user_settings WHERE user_id = ? AND key = ?", (self.uid, key))
+        else:
+            self.db.execute("INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?) "
+                            "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value", (self.uid, key, value))
 
 
 class LocalDB(_Database):
