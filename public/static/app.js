@@ -93,25 +93,75 @@ const statusOptions = (cur) => state.meta.statuses
 
 async function showLogin() {
   $("#app").hidden = true;
-  $("#login").hidden = false;
   closeDrawer();
   try { state.meta = await api("/api/meta"); } catch {}
   const { auth = {} } = state.meta;
-  $("#google-login").hidden = !auth.google;
-  // Single-user trackers just show the password box; with Google sign-in it's tucked away for the admin.
-  const pw = $("#password-login");
-  pw.hidden = !auth.password;
-  pw.open = !auth.google;
-  $("summary", pw).hidden = !auth.google;
   const err = new URLSearchParams(location.search).get("login_error");
-  if (err) {
-    $("#login-error").textContent = err;
-    $("#login-error").hidden = false;
-    history.replaceState(null, "", "/");
+  if (err) history.replaceState(null, "", "/");
+  // With Google sign-in the public landing page is the front door; the password card is for the admin.
+  if (auth.google) {
+    $("#login").hidden = true;
+    $("#landing").hidden = false;
+    $("#admin-login").hidden = !auth.password;
+    $("#landing-error").textContent = err || "";
+    $("#landing-error").hidden = !err;
+    startLanding();
+  } else {
+    showPasswordCard(err);
   }
-  if (!pw.hidden && pw.open) $("#login-form").password.focus();
 }
 
+function showPasswordCard(err) {
+  $("#landing").hidden = true;
+  $("#login").hidden = false;
+  $("#back-to-landing").hidden = !state.meta.auth?.google;
+  $("#login-error").textContent = err || "";
+  $("#login-error").hidden = !err;
+  $("#login-form").password.focus();
+}
+
+$("#admin-login").addEventListener("click", (e) => {
+  e.preventDefault();
+  showPasswordCard();
+});
+
+// Landing page motion: sections fade up as they scroll in; numbers count up; the extension "types".
+let landingStarted = false;
+function startLanding() {
+  if (landingStarted) return;
+  landingStarted = true;
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const play = (el) => {
+    el.classList.add("in");
+    if (still) return;
+    $$(".count", el).forEach((n) => {
+      const to = Number(n.dataset.to), t0 = performance.now();
+      const tick = (t) => {
+        const k = Math.min(1, (t - t0) / 1200);
+        n.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
+        if (k < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    $$(".typed", el).forEach((n, i) => {
+      const text = n.dataset.text;
+      n.textContent = "";
+      setTimeout(() => {
+        let k = 0;
+        const timer = setInterval(() => {
+          n.textContent = text.slice(0, ++k);
+          if (k >= text.length) clearInterval(timer);
+        }, 35);
+      }, 300 + i * 650);
+    });
+  };
+  $$(".typed").forEach((n) => (n.textContent = n.dataset.text));
+  if (still || !("IntersectionObserver" in window)) return $$("#landing .reveal").forEach(play);
+  const seen = new IntersectionObserver((entries) => entries.forEach((e) => {
+    if (e.isIntersecting) { play(e.target); seen.unobserve(e.target); }
+  }), { threshold: 0.2 });
+  $$("#landing .reveal").forEach((el) => seen.observe(el));
+}
 
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -993,6 +1043,7 @@ async function boot() {
   state.meta = await api("/api/meta");
   if (state.meta.auth.required && !state.meta.auth.ok) return showLogin();
   $("#login").hidden = true;
+  $("#landing").hidden = true;
   $("#app").hidden = false;
   const admin = !!state.meta.user?.is_admin;
   $('.tabs [data-view="users"]').hidden = !admin;

@@ -205,12 +205,6 @@ td select { width: auto; padding: 3px 6px; }
 .login-card .field { text-align: left; }
 .login-card button { width: 100%; justify-content: center; padding: 10px; }
 .error { color: var(--danger); margin: 12px 0 0; }
-.login-card .btn.wide { width: 100%; justify-content: center; padding: 10px; margin-top: 4px; }
-.login-card details { text-align: left; margin-top: 16px; }
-.login-card #google-login + details { border-top: 1px solid var(--border); padding-top: 12px; }
-.login-card #login-form { margin-top: 10px; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-.btn.primary:hover { filter: brightness(1.08); }
 
 /* users (admin) */
 .badge { background: var(--danger); color: #fff; border-radius: 999px; font-size: 11px; padding: 0 6px; margin-left: 2px; }
