@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    :root {
+      --bg: #ffffff; --surface-2: #f0f2f5; --border: #e1e4e8; --text: #1c2128; --muted: #667085;
+      --accent: #2f6fed; --ok: #1f9d55; --danger: #d1242f; color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #171b21; --surface-2: #1f242c; --border: #2b313a; --text: #e6e8eb; --muted: #949ba6; --accent: #5b8ef7; color-scheme: dark; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; width: 380px; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, sans-serif; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    header b { font-size: 14px; }
+    header a { color: var(--accent); text-decoration: none; }
+    form { padding: 12px 14px 14px; }
+    label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
+    input, select, textarea { display: block; width: 100%; margin-top: 3px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); font: inherit; font-weight: 400; }
+    textarea { resize: vertical; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+    .statuses { display: flex; gap: 4px; margin: 2px 0 10px; }
+    .statuses button { flex: 1; padding: 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); cursor: pointer; font: inherit; }
+    .statuses button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    details { margin-bottom: 10px; }
+    summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+    #save, #connect { width: 100%; padding: 9px; border: none; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+    #save:disabled, #connect:disabled { opacity: .6; cursor: default; }
+    .msg { padding: 8px 10px; border-radius: 7px; background: var(--surface-2); margin-bottom: 10px; font-size: 12px; }
+    .msg.ok { color: var(--ok); }
+    .msg.err { color: var(--danger); }
+    .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <header><b>Save job</b><span><a id="settings" href="#">Settings</a> · <a id="open-tracker" href="#">Open tracker ↗</a></span></header>
+  <form id="setup" hidden>
+    <div id="setup-msg" class="msg" hidden></div>
+    <label>Tracker address<input name="server" placeholder="https://your-tracker.vercel.app" required></label>
+    <label>Password<input name="password" type="password" placeholder="Leave empty for a local tracker without one"></label>
+    <button id="connect" class="primary" type="submit">Connect</button>
+    <div class="hint">The address is shown on the tracker's Resumes tab.</div>
+  </form>
+  <form id="f" hidden>
+    <div id="msg" class="msg" hidden></div>
+    <div class="statuses" id="statuses">
+      <button type="button" data-status="saved">Saved</button>
+      <button type="button" data-status="applied">Applied</button>
+      <button type="button" data-status="interviewing">Interviewing</button>
+    </div>
+    <label>Job title<input name="title" required></label>
+    <div class="two">
+      <label>Company<input name="company" required></label>
+      <label>Location<input name="location"></label>
+    </div>
+    <div class="two">
+      <label>Resume used<select name="resume_id"><option value="">— none —</option></select></label>
+      <label>Salary<input name="salary"></label>
+    </div>
+    <label>Notes<textarea name="notes" rows="2" placeholder="Referral, recruiter, anything to remember"></textarea></label>
+    <details>
+      <summary id="desc-summary">Job description</summary>
+      <textarea name="description" rows="8"></textarea>
+    </details>
+    <input type="hidden" name="url"><input type="hidden" name="source">
+    <button id="save" type="submit">Save to tracker</button>
+    <div class="hint">Tip: if the description is wrong, highlight it on the page and reopen this popup.</div>
+  </form>
+  <script src="popup.js"></script>
+</body>
+</html>

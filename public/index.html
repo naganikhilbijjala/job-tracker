@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Job Tracker</title>
+  <meta name="theme-color" content="#2f6fed">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <section id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <img src="/icon-192.png" alt="" width="56" height="56">
+      <h1>Job Tracker</h1>
+      <label class="field">Password<input name="password" type="password" autocomplete="current-password" required autofocus></label>
+      <button type="submit" class="primary">Log in</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="brand">Job Tracker</div>
+      <nav class="tabs" role="tablist">
+        <button data-view="board">Board</button>
+        <button data-view="table">List</button>
+        <button data-view="resumes">Resumes</button>
+      </nav>
+      <input id="search" type="search" placeholder="Search company, title, notes…" autocomplete="off">
+      <button id="add-job" class="primary" aria-label="Add job">+ <span class="label">Add job</span></button>
+    </header>
+
+    <section id="stats" class="stats"></section>
+
+    <main>
+      <section id="view-board" class="view board"></section>
+
+      <section id="view-table" class="view">
+        <div class="table-tools">
+          <select id="status-filter"><option value="">All statuses</option></select>
+          <a class="btn" href="/api/export.csv">Export CSV</a>
+        </div>
+        <div class="table-wrap"><table id="jobs-table"></table></div>
+      </section>
+
+      <section id="view-resumes" class="view">
+        <div class="resume-grid">
+          <div>
+            <label id="dropzone" class="dropzone">
+              <input id="resume-files" type="file" multiple accept=".pdf,.doc,.docx,.odt,.rtf,.txt,.md" hidden>
+              <strong>Add resumes</strong>
+              <span class="hide-touch">Drop files here or click to choose</span>
+              <span class="muted small">PDF, DOCX, DOC, ODT, RTF, TXT, MD · up to 4 MB</span>
+            </label>
+            <p id="storage-note" class="muted small"></p>
+            <div id="resume-list"></div>
+          </div>
+          <div class="side">
+            <aside id="drive-panel" class="panel"></aside>
+            <aside id="connect-panel" class="panel"></aside>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="scrim" hidden></div>
+  <aside id="drawer" aria-hidden="true">
+    <form id="job-form" autocomplete="off">
+      <div class="drawer-head">
+        <h2 id="drawer-title">Add job</h2>
+        <button type="button" class="icon" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="drawer-body">
+        <label class="field">Job posting link
+          <div class="row">
+            <input name="url" type="url" inputmode="url" placeholder="Paste a link to auto-fill">
+            <button type="button" id="autofill">Auto-fill</button>
+            <a id="open-url" class="btn" target="_blank" rel="noopener" hidden>Open ↗</a>
+          </div>
+        </label>
+        <div class="grid2">
+          <label class="field">Job title<input name="title" required></label>
+          <label class="field">Company<input name="company" required></label>
+          <label class="field">Location<input name="location"></label>
+          <label class="field">Salary<input name="salary"></label>
+          <label class="field">Status<select name="status"></select></label>
+          <label class="field">Source<input name="source" placeholder="linkedin.com, referral…"></label>
+          <label class="field">Date applied<input name="date_applied" type="date"></label>
+          <label class="field">Follow up on<input name="follow_up" type="date"></label>
+        </div>
+        <label class="field">Resume used
+          <div class="row">
+            <select name="resume_id"></select>
+            <label class="btn">Upload new…<input id="drawer-resume-file" type="file" hidden accept=".pdf,.doc,.docx,.odt,.rtf,.txt,.md"></label>
+          </div>
+        </label>
+        <label class="field">Notes<textarea name="notes" rows="4" placeholder="Recruiter name, referral, interview prep…"></textarea></label>
+        <label class="field">Job description<textarea name="description" rows="12" placeholder="Saved so you still have it after the posting comes down"></textarea></label>
+        <div id="timeline"></div>
+      </div>
+      <div class="drawer-foot">
+        <button type="button" id="delete-job" class="danger">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </aside>
+
+  <div id="toast" role="status"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

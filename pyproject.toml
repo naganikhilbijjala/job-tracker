@@ -1,0 +1,9 @@
+[project]
+name = "job-tracker"
+version = "1.0.0"
+description = "Personal job application tracker"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.vercel]
+entrypoint = "server:app"

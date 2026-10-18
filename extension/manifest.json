@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Job Tracker \u2014 Save Job",
+  "version": "1.1.0",
+  "description": "Save the job posting you're viewing to your Job Tracker in one click.",
+  "action": {
+    "default_title": "Save job to tracker (Alt+Shift+J)",
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+J"
+      },
+      "description": "Save this job"
+    }
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.vercel.app/*",
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*"
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "job-tracker@localhost",
+      "strict_min_version": "115.0"
+    }
+  },
+  "optional_host_permissions": [
+    "https://*/*"
+  ]
+}
