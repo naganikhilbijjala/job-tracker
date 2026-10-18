@@ -15,6 +15,14 @@
   const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length) &&
     getComputedStyle(el).visibility !== "hidden";
   const text = (el) => (el ? (el.innerText || el.textContent || "") : "").replace(/\s+/g, " ").trim();
+  // A label is short. Checking textContent first skips page-sized containers without laying them out.
+  const shortText = (el) => ((el.textContent || "").length < 400 ? text(el) : "");
+  // The first few elements matching sel under node, not every one on a big page.
+  const firstFew = (node, sel, n = 25) => {
+    const out = [];
+    for (const el of node.querySelectorAll(sel)) { out.push(el); if (out.length >= n) break; }
+    return out;
+  };
 
   // LinkedIn repeats a label for screen readers ("Phone Phone"); keep one copy.
   function dedupe(t) {
@@ -44,9 +52,9 @@
     let node = el;
     for (let i = 0; i < 4 && node.parentElement; i++) {
       node = node.parentElement;
-      const lbl = [...node.querySelectorAll("label, legend, [class*='label' i], [class*='question' i]")]
-        .find((l) => !l.contains(el) && text(l));
-      if (lbl) return tidy(text(lbl));
+      const lbl = firstFew(node, "label, legend, [class*='label' i], [class*='question' i]")
+        .find((l) => !l.contains(el) && shortText(l));
+      if (lbl) return tidy(shortText(lbl));
     }
     return tidy(el.placeholder || el.name || "");
   }
@@ -65,9 +73,9 @@
     let node = first.parentElement;
     for (let i = 0; i < 5 && node; i++, node = node.parentElement) {
       if (inputs.every((x) => node.contains(x))) {
-        const lbl = [...node.querySelectorAll("label, legend, span, p, div")]
-          .find((l) => !inputs.some((x) => l.contains(x) || (x.labels && [...x.labels].includes(l))) && text(l) && !l.querySelector("input"));
-        if (lbl) return tidy(text(lbl));
+        const lbl = firstFew(node, "label, legend, span, p, div", 60)
+          .find((l) => !l.querySelector("input") && !inputs.some((x) => x.labels && [...x.labels].includes(l)) && shortText(l));
+        if (lbl) return tidy(shortText(lbl));
       }
     }
     return "";
