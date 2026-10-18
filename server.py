@@ -1227,22 +1227,47 @@ def public_ai_config(saved):
     return {"provider": provider, **per_provider.get(provider, public({})), "saved": per_provider}
 
 
+def save_profile(db, profile=None, instructions=None, by="you"):
+    """Save the profile and/or instructions, keeping the version before as a backup to restore."""
+    old = {"profile": db.get_setting("profile") or "", "instructions": db.get_setting("ai_instructions") or ""}
+    new = {"profile": old["profile"] if profile is None else str(profile),
+           "instructions": old["instructions"] if instructions is None else str(instructions)}
+    if new == old:
+        return
+    db.set_setting("profile_previous", json.dumps({**old, "replaced_at": now(), "replaced_by": by}))
+    db.set_setting("profile", new["profile"])
+    db.set_setting("ai_instructions", new["instructions"])
+
+
+def profile_state(db):
+    previous = json.loads(db.get_setting("profile_previous") or "null")
+    return {"profile": db.get_setting("profile") or "", "instructions": db.get_setting("ai_instructions") or "",
+            "previous": previous and {"replaced_at": previous["replaced_at"], "replaced_by": previous["replaced_by"]}}
+
+
 @route("GET", r"/api/profile")
 def profile_get(req):
     db, _ = backend()
-    return json_response({"profile": db.get_setting("profile") or "",
-                          "instructions": db.get_setting("ai_instructions") or ""})
+    return json_response(profile_state(db))
 
 
 @route("PUT", r"/api/profile")
 def profile_put(req):
     db, _ = backend()
     data = req.json()
-    if "profile" in data:
-        db.set_setting("profile", str(data["profile"]))
-    if "instructions" in data:
-        db.set_setting("ai_instructions", str(data["instructions"]))
-    return json_response({"ok": True})
+    save_profile(db, data.get("profile"), data.get("instructions"))
+    return json_response(profile_state(db))
+
+
+@route("POST", r"/api/profile/restore")
+def profile_restore(req):
+    """Swap back to the version before the last change (restoring twice swaps forward again)."""
+    db, _ = backend()
+    previous = json.loads(db.get_setting("profile_previous") or "null")
+    if not previous:
+        raise ApiError(404, "There's no earlier version to restore")
+    save_profile(db, previous["profile"], previous["instructions"], by="restore")
+    return json_response(profile_state(db))
 
 
 @route("GET", r"/api/ai")
@@ -1717,11 +1742,36 @@ def mcp_tools(db, origin):
         update_job(db, int(job_id), fields)
         return job_summary(db, job_id)
 
+    def update_profile(profile, instructions=None, allow_shorter=False):
+        current = db.get_setting("profile") or ""
+        profile = str(profile).strip()
+        if not profile:
+            raise mcp.ToolError("The profile can't be empty.")
+        if len(profile) < len(current) * 0.5 and not allow_shorter:
+            raise mcp.ToolError(
+                f"The new profile ({len(profile)} characters) is less than half the current one ({len(current)}). "
+                "The profile should keep everything that's still true; merge the new details into it. If the user "
+                "asked for it to be shortened, call again with allow_shorter: true.")
+        save_profile(db, profile, instructions, by="Claude")
+        return {"saved": True, "characters": len(profile),
+                "note": "The previous version is kept. The user can restore it from the Profile tab."}
+
     int_id = {"type": "integer", "description": "Job id from list_jobs"}
     return [
         mcp.Tool("get_profile", "The candidate's master profile (full experience, skills, education) and their "
                  "standing instructions for tailoring. Read this before writing any resume or answer.",
                  {}, [], get_profile),
+        mcp.Tool("update_profile", "Replace the candidate's master profile (and optionally their tailoring "
+                 "instructions). Call get_profile first and send the complete merged profile: keep everything that's "
+                 "still true, add new roles, projects, skills and achievements from the user's own notes or files, and "
+                 "correct anything outdated. Only facts the user's material states; never invent or embellish. Include "
+                 "more than fits on one page (all roles with dates and bullet points, projects, skills, education, "
+                 "certifications, links): the tracker picks what's relevant per job. Show the user a summary of what "
+                 "changed. The previous version is kept so they can restore it.",
+                 {"profile": {"type": "string", "description": "The complete new profile, plain text or Markdown"},
+                  "instructions": {"type": "string", "description": "Only if the user asked to change them"},
+                  "allow_shorter": {"type": "boolean", "description": "True only if the user asked to shorten it"}},
+                 ["profile"], update_profile),
         mcp.Tool("list_jobs", "List tracked job applications, newest activity first.",
                  {"status": {"type": "string", "enum": STATUSES}, "query": {"type": "string",
                   "description": "Words to match in company, title, location or notes"},
@@ -1754,7 +1804,8 @@ def mcp_tools(db, origin):
 
 
 MCP_INSTRUCTIONS = ("Job Tracker holds the user's job applications, saved job descriptions, their master profile, "
-                    "and tailored resumes. To tailor a resume: call get_profile and get_job, write the resume "
+                    "and tailored resumes. To update the profile from the user's notes: read get_profile, merge in "
+                    "the facts from their notes, and save the whole thing with update_profile. To tailor a resume: call get_profile and get_job, write the resume "
                     "using only facts from the profile, then save it with save_tailored_resume. Its result includes "
                     "a keyword and format check: if keywords the profile supports are missing, or format checks "
                     "fail, fix them with update_tailored_resume. Then give the user the returned link (they "

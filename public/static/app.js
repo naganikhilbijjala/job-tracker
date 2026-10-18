@@ -817,15 +817,36 @@ $("#view-resumes").addEventListener("click", async (e) => {
 // ------------------------------------------------------------ profile & AI settings
 
 let profileLoaded = false;
+let profileDirty = false;  // unsaved edits in the profile boxes
 let aiProviders = {};
 
+function showProfile({ profile, instructions, previous }) {
+  $("#profile-text").value = profile;
+  $("#instructions-text").value = instructions;
+  profileDirty = false;
+  renderProfileHistory(previous);
+}
+
+function renderProfileHistory(previous) {
+  $("#profile-history").innerHTML = previous
+    ? `${previous.replaced_by === "Claude" ? "Updated by Claude" : previous.replaced_by === "restore" ? "Restored" : "Changed"}
+       ${ago(previous.replaced_at)} · <a href="#" id="profile-restore">Restore previous version</a>`
+    : "";
+}
+
+$("#profile-text").addEventListener("input", () => (profileDirty = true));
+$("#instructions-text").addEventListener("input", () => (profileDirty = true));
+
 async function loadProfile() {
-  if (profileLoaded) return;
+  // Claude can change the profile over MCP, so read it again on every visit (unless you're mid-edit).
+  if (profileLoaded) {
+    if (!profileDirty) api("/api/profile").then((p) => !profileDirty && showProfile(p)).catch(() => {});
+    return;
+  }
   try {
     const [profile, aiInfo, mcpInfo, answers] = await Promise.all([
       api("/api/profile"), api("/api/ai"), api("/api/mcp"), api("/api/answers")]);
-    $("#profile-text").value = profile.profile;
-    $("#instructions-text").value = profile.instructions;
+    showProfile(profile);
     aiProviders = aiInfo.providers;
     renderAiPanel(aiInfo.config);
     renderMcpPanel(mcpInfo);
@@ -1065,9 +1086,15 @@ $("#view-profile").addEventListener("click", async (e) => {
                        ok: "Make new token", danger: true })) return;
       renderMcpPanel(await api("/api/mcp/rotate", { method: "POST" }));
       toast("New token created");
+    } else if (e.target.id === "profile-restore") {
+      e.preventDefault();
+      if (!await ask({ title: "Restore the previous version?", ok: "Restore",
+        body: "Your profile and instructions go back to how they were before the last change. The current version is kept, so you can switch back the same way." })) return;
+      showProfile(await api("/api/profile/restore", { method: "POST" }));
+      toast("Previous version restored");
     } else if (e.target.id === "save-profile") {
-      await api("/api/profile", { method: "PUT", json: {
-        profile: $("#profile-text").value, instructions: $("#instructions-text").value } });
+      showProfile(await api("/api/profile", { method: "PUT", json: {
+        profile: $("#profile-text").value, instructions: $("#instructions-text").value } }));
       $("#profile-status").textContent = "Saved ✓";
       setTimeout(() => ($("#profile-status").textContent = ""), 2000);
     }

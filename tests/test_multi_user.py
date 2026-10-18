@@ -262,6 +262,29 @@ class MultiUserTest(unittest.TestCase):
                                                                       "method": "tools/list"})["status"], 401)
         self.assert_admin_data_intact()
 
+    def test_claude_can_update_the_profile_and_it_can_be_restored(self):
+        f = self.friend
+        token = f.call("GET", "/api/mcp")["json"]["token"]
+
+        def tool(name, args):
+            return Client(bearer=token).call("POST", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                              "params": {"name": name, "arguments": args}})["json"]["result"]
+
+        f.call("PUT", "/api/profile", {"profile": "Friend profile. " * 20, "instructions": "One page."})
+        # Dropping most of the profile by accident is refused; asked-for shortening is allowed.
+        self.assertTrue(tool("update_profile", {"profile": "Short"})["isError"])
+        merged = "Friend profile. " * 20 + "New role from my notes."
+        self.assertFalse(tool("update_profile", {"profile": merged}).get("isError"))
+        state = f.call("GET", "/api/profile")["json"]
+        self.assertEqual((state["profile"], state["instructions"]), (merged, "One page."))
+        self.assertEqual(state["previous"]["replaced_by"], "Claude")
+        # Restore swaps back; restoring again swaps forward.
+        self.assertEqual(f.call("POST", "/api/profile/restore")["json"]["profile"], "Friend profile. " * 20)
+        self.assertEqual(f.call("POST", "/api/profile/restore")["json"]["profile"], merged)
+        # Their Claude only ever touches their own profile.
+        self.assertNotIn(b"New role", self.admin.call("GET", "/api/profile")["body"])
+        self.assert_admin_data_intact()
+
     def test_anyone_can_sign_up(self):
         newcomer = Client()
         newcomer.sign_in("newcomer@example.com", "Newcomer")
