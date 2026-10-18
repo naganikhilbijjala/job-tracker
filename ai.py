@@ -5,6 +5,7 @@ OpenAI-style chat completions API, which OpenAI, Gemini, OpenRouter, Groq and
 local servers such as Ollama all accept.
 """
 import json
+import time
 import urllib.error
 import urllib.request
 
@@ -25,26 +26,44 @@ class AIError(Exception):
     pass
 
 
-def _post(url, headers, body):
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+def _error_message(raw):
+    """Pull a readable message out of an error body. Providers disagree on the shape:
+    Anthropic/OpenAI send {"error": {...}}, Gemini sends [{"error": {...}}]."""
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as res:
-            return json.load(res)
-    except urllib.error.HTTPError as e:
-        raw = e.read().decode("utf-8", "replace")
+        data = json.loads(raw)
+    except ValueError:
+        return raw.strip()[:400]
+    if isinstance(data, list) and data:
+        data = data[0]
+    if isinstance(data, dict):
+        err = data.get("error", data)
+        if isinstance(err, dict):
+            return str(err.get("message") or err.get("status") or err)[:400]
+        return str(err)[:400]
+    return str(data)[:400]
+
+
+def _post(url, headers, body):
+    req_body = json.dumps(body).encode()
+    for attempt in range(2):
+        req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
         try:
-            detail = json.loads(raw)
-            detail = (detail.get("error") or {}).get("message") if isinstance(detail.get("error"), dict) \
-                else detail.get("error") or detail.get("message") or raw
-        except ValueError:
-            detail = raw
-        if e.code in (401, 403):
-            raise AIError(f"The provider rejected the API key ({e.code}): {detail}") from None
-        if e.code == 429:
-            raise AIError(f"Rate limited or out of credits: {detail}") from None
-        raise AIError(f"Provider error {e.code}: {str(detail)[:400]}") from None
-    except (urllib.error.URLError, TimeoutError) as e:
-        raise AIError(f"Couldn't reach the provider: {getattr(e, 'reason', e)}") from None
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as res:
+                return json.load(res)
+        except urllib.error.HTTPError as e:
+            detail = _error_message(e.read().decode("utf-8", "replace"))
+            if e.code in (500, 502, 503, 504, 529) and attempt == 0:
+                time.sleep(2)  # providers are sometimes briefly overloaded; one retry usually works
+                continue
+            if e.code in (401, 403):
+                raise AIError(f"The provider rejected the API key ({e.code}): {detail}") from None
+            if e.code == 429:
+                raise AIError(f"Rate limited or out of free quota — wait a minute and try again. ({detail})") from None
+            if e.code in (500, 502, 503, 504, 529):
+                raise AIError(f"The provider is overloaded right now ({e.code}) — try again shortly. ({detail})") from None
+            raise AIError(f"Provider error {e.code}: {detail}") from None
+        except (urllib.error.URLError, TimeoutError) as e:
+            raise AIError(f"Couldn't reach the provider: {getattr(e, 'reason', e)}") from None
 
 
 def _anthropic(config, system, messages, max_tokens):
