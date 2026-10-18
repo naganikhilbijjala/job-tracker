@@ -7,111 +7,187 @@
   <link rel="icon" href="/icon-192.png">
   <style>
     :root {
-      --ink: #111418; --muted: #4b5563; --rule: #c9ced6; --accent: #2f6fed;
-      --bar-bg: #f6f7f9; --bar-border: #e1e4e8; --desk: #e9ecf0;
+      --ink: #111418; --muted: #4b5563; --rule: #9aa3ae; --accent: #2f6fed;
+      --bar-bg: #f6f7f9; --bar-border: #e1e4e8; --bar-ink: #1c2128; --desk: #e9ecf0;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --bar-bg: #171b21; --bar-border: #2b313a; --desk: #0f1216; }
-      .toolbar { color: #e6e8eb; }
+      :root { --bar-bg: #171b21; --bar-border: #2b313a; --bar-ink: #e6e8eb; --desk: #0f1216; }
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--desk); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
     .toolbar {
       position: sticky; top: 0; z-index: 2; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-      padding: 10px 16px; background: var(--bar-bg); border-bottom: 1px solid var(--bar-border);
+      padding: 10px 16px; background: var(--bar-bg); border-bottom: 1px solid var(--bar-border); color: var(--bar-ink);
     }
     .toolbar .title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .toolbar .hint { font-size: 12px; opacity: .7; flex-basis: 100%; }
-    button, a.btn {
-      font: inherit; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--bar-border);
-      background: transparent; color: inherit; cursor: pointer; text-decoration: none;
+    .toolbar label { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+    #fit { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: #e7f6ec; color: #1f7a45; }
+    #fit.over { background: #fff4d6; color: #8a5a00; }
+    button, select {
+      font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--bar-border);
+      background: transparent; color: inherit; cursor: pointer;
     }
     button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-    /* the page itself: US Letter proportions on screen, real margins in print */
-    .sheet {
-      max-width: 8.5in; margin: 24px auto; padding: 0.6in 0.7in; background: #fff; color: var(--ink);
-      box-shadow: 0 2px 10px rgba(0, 0, 0, .12); min-height: 11in;
-      font: 10.5pt/1.38 "Calibri", "Carlito", "Helvetica Neue", Arial, sans-serif;
+    /* One US Letter page. Screen padding equals the print margins, so what you see is what prints. */
+    .sheet { width: 8.5in; min-height: 11in; margin: 24px auto; padding: 0.5in 0.6in; background: #fff;
+             box-shadow: 0 2px 10px rgba(0, 0, 0, .12); }
+    .resume { --fs: 10.5pt; --lh: 1.32; --gap: 1; color: var(--ink);
+              font: var(--fs)/var(--lh) "Calibri", "Carlito", "Helvetica Neue", Arial, sans-serif; }
+    .resume.size-compact { --fs: 10pt; --lh: 1.27; --gap: .8; }
+    .resume.size-tight { --fs: 9.4pt; --lh: 1.22; --gap: .6; }
+    .resume:focus { outline: none; }
+
+    .resume header { text-align: center; margin-bottom: calc(8pt * var(--gap)); }
+    .resume h1 { font-size: calc(var(--fs) * 2.05); line-height: 1.1; margin: 0 0 3pt; letter-spacing: .3pt; }
+    .resume .contact { margin: 0; color: var(--muted); font-size: calc(var(--fs) * .95); }
+    .resume .contact .sep { color: var(--rule); }
+    .resume h2 {
+      font-size: calc(var(--fs) * 1.02); text-transform: uppercase; letter-spacing: 1pt;
+      margin: calc(10pt * var(--gap)) 0 calc(4pt * var(--gap)); padding-bottom: 1.5pt; border-bottom: 1.2px solid var(--ink);
     }
-    .sheet:focus { outline: 2px dashed var(--accent); outline-offset: 4px; }
-    .sheet h1 { font-size: 20pt; margin: 0 0 2pt; letter-spacing: .2pt; }
-    .sheet h1 + p { color: var(--muted); margin: 0 0 10pt; }
-    .sheet h2 {
-      font-size: 11pt; text-transform: uppercase; letter-spacing: .8pt; margin: 12pt 0 5pt;
-      padding-bottom: 2pt; border-bottom: 1px solid var(--rule);
-    }
-    .sheet h3 { font-size: 10.5pt; margin: 8pt 0 1pt; }
-    .sheet h3 + p { color: var(--muted); margin: 0 0 3pt; }
-    .sheet p { margin: 0 0 5pt; }
-    .sheet ul { margin: 2pt 0 6pt; padding-left: 15pt; }
-    .sheet li { margin: 0 0 2pt; }
-    .sheet a { color: inherit; }
-    .sheet hr { border: none; border-top: 1px solid var(--rule); margin: 8pt 0; }
+    .resume .entry { margin-bottom: calc(6pt * var(--gap)); break-inside: avoid; }
+    .resume .entry-head, .resume .entry-sub { display: flex; justify-content: space-between; gap: 12pt; align-items: baseline; }
+    .resume .entry-head .l { font-weight: 700; }
+    .resume .entry-head .r { font-weight: 400; color: var(--muted); }
+    .resume .entry-sub .l, .resume .entry-sub .l strong { font-style: italic; font-weight: 400; }
+    .resume .entry-sub .r { color: var(--muted); white-space: nowrap; }
+    .resume .r { text-align: right; flex: none; }
+    .resume p { margin: 0 0 calc(3pt * var(--gap)); }
+    .resume ul { margin: calc(2pt * var(--gap)) 0 0; padding-left: 13pt; }
+    .resume li { margin: 0 0 calc(1.5pt * var(--gap)); padding-left: 1pt; }
+    .resume ul.skills { list-style: none; padding-left: 0; }
+    .resume ul.skills li { margin-bottom: calc(1pt * var(--gap)); }
+    .resume a { color: inherit; text-decoration: none; }
+    .resume .contact a { text-decoration: underline; text-decoration-color: var(--rule); }
+    .resume hr { border: none; border-top: 1px solid var(--rule); margin: 6pt 0; }
+
+    /* Off-screen copy used to measure how many pages the resume fills at each size. */
+    #measure { position: absolute; left: -10000px; top: 0; width: 7.3in; visibility: hidden; }
     .error { max-width: 8.5in; margin: 40px auto; padding: 16px; background: #fff; border-radius: 8px; }
 
     @page { size: letter; margin: 0.5in 0.6in; }
     @media print {
       body { background: #fff; }
       .toolbar { display: none; }
-      .sheet { box-shadow: none; margin: 0; padding: 0; max-width: none; min-height: 0; }
-      h2, h3 { break-after: avoid; }
-      li { break-inside: avoid; }
+      .sheet { box-shadow: none; margin: 0; padding: 0; width: auto; min-height: 0; }
+      h2 { break-after: avoid; }
     }
-    @media (max-width: 700px) {
-      .sheet { margin: 0; padding: 20px 16px; min-height: 0; box-shadow: none; }
+    @media screen and (max-width: 8.8in) {
+      .sheet { width: auto; min-height: 0; margin: 0; padding: 20px 16px; box-shadow: none; }
     }
   </style>
 </head>
 <body>
   <div class="toolbar">
     <span class="title" id="doc-title">Loading…</span>
+    <label>Size
+      <select id="size">
+        <option value="auto">Auto-fit</option>
+        <option value="normal">Normal</option>
+        <option value="compact">Compact</option>
+        <option value="tight">Tight</option>
+      </select>
+    </label>
+    <span id="fit"></span>
     <button id="save" hidden>Save edits</button>
     <button id="print" class="primary">Save as PDF</button>
-    <span class="hint">Click anywhere on the page to edit before saving. In the print dialog, choose “Save as PDF” and turn off headers and footers.</span>
+    <span class="hint">Click the page to edit. In the print dialog choose “Save as PDF” and turn off “Headers and footers”.</span>
   </div>
-  <article id="sheet" class="sheet" contenteditable="true" spellcheck="true"></article>
+  <div class="sheet"><article id="resume" class="resume" contenteditable="true" spellcheck="true"></article></div>
+  <div id="measure" class="resume"></div>
   <script src="/static/markdown.js"></script>
   <script>
     "use strict";
     const id = location.pathname.split("/").filter(Boolean).pop();
-    const sheet = document.getElementById("sheet");
+    const resume = document.getElementById("resume");
+    const measure = document.getElementById("measure");
+    const sizeSelect = document.getElementById("size");
+    const fit = document.getElementById("fit");
     const saveBtn = document.getElementById("save");
-    let doc;
+    const PAGE_PX = 10 * 96;  // 11in page minus 0.5in top and bottom margins
+    const SIZES = ["normal", "compact", "tight"];
 
-    // Turn the edited page back into Markdown so edits are kept in the tracker.
+    function pagesAt(size) {
+      measure.className = `resume size-${size}`;
+      measure.innerHTML = resume.innerHTML;
+      return measure.offsetHeight / PAGE_PX;
+    }
+
+    function applySize() {
+      let size = sizeSelect.value;
+      if (size === "auto") size = SIZES.find((s) => pagesAt(s) <= 1) || "tight";
+      resume.className = `resume size-${size}`;
+      const pages = Math.ceil(pagesAt(size) - 0.02);
+      fit.textContent = pages <= 1 ? "Fits on 1 page ✓" : `${pages} pages`;
+      fit.classList.toggle("over", pages > 1);
+      try { localStorage.setItem("resume-size", sizeSelect.value); } catch {}
+    }
+
+    // Edited page → Markdown, keeping bold, italics and links.
+    function inl(el) {
+      return [...el.childNodes].map((n) => {
+        if (n.nodeType === Node.TEXT_NODE) return n.textContent;
+        if (n.nodeType !== Node.ELEMENT_NODE || n.classList.contains("sep")) return "";
+        const inner = inl(n).trim();
+        if (!inner) return n.tagName === "BR" ? " " : "";
+        if (/^(STRONG|B)$/.test(n.tagName)) return `**${inner}**`;
+        if (/^(EM|I)$/.test(n.tagName)) return `*${inner}*`;
+        if (n.tagName === "A") return `[${inner}](${n.getAttribute("href")})`;
+        return inl(n);
+      }).join("").replace(/\s+/g, " ").trim();
+    }
+
     function toMarkdown(root) {
-      const text = (el) => el.innerText.replace(/\s+/g, " ").trim();
-      const lines = [];
-      for (const el of root.children) {
-        const tag = el.tagName;
-        if (/^H[1-6]$/.test(tag)) lines.push("#".repeat(+tag[1]) + " " + text(el), "");
-        else if (tag === "UL" || tag === "OL") {
-          [...el.children].forEach((li, i) => lines.push((tag === "UL" ? "- " : `${i + 1}. `) + text(li)));
-          lines.push("");
-        } else if (tag === "HR") lines.push("---", "");
-        else if (text(el)) lines.push(el.innerText.split("\n").map((l) => l.trim()).filter(Boolean).join("\n"), "");
-      }
-      return lines.join("\n").trim() + "\n";
+      const out = [];
+      const pair = (el) => {
+        const [l, r] = [el.querySelector(".l"), el.querySelector(".r")];
+        return inl(l || el) + (r && inl(r) ? ` | ${inl(r)}` : "");
+      };
+      const walk = (parent) => {
+        for (const el of parent.children) {
+          if (el.tagName === "HEADER" || el.matches("section.entry")) { walk(el); continue; }
+          if (el.tagName === "H1") out.push(`# ${inl(el)}`);
+          else if (el.matches(".contact")) out.push([...el.querySelectorAll(".item")].map(inl).filter(Boolean).join(" | "), "");
+          else if (el.tagName === "H2") out.push("", `## ${inl(el)}`);
+          else if (el.matches(".entry-head")) out.push("", `### ${pair(el)}`);
+          else if (el.matches(".entry-sub")) out.push(pair(el));
+          else if (el.tagName === "UL" || el.tagName === "OL") out.push(...[...el.children].map((li) => `- ${inl(li)}`));
+          else if (el.tagName === "HR") out.push("", "---", "");
+          else if (inl(el)) out.push(inl(el));
+        }
+      };
+      walk(root);
+      return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
     }
 
     fetch(`/api/generated/${id}`).then(async (res) => {
       if (res.status === 401) return (location.href = "/");
-      doc = await res.json();
+      const doc = await res.json();
       if (!res.ok) throw new Error(doc.error || res.statusText);
       document.title = doc.title;  // Chrome uses this as the PDF file name
       document.getElementById("doc-title").textContent = doc.title;
-      sheet.innerHTML = renderMarkdown(doc.content);
+      resume.innerHTML = renderResume(doc.content);
+      try { sizeSelect.value = localStorage.getItem("resume-size") || "auto"; } catch {}
+      (document.fonts ? document.fonts.ready : Promise.resolve()).then(applySize);
     }).catch((e) => {
-      sheet.outerHTML = `<div class="error">Couldn't load this resume: ${escapeHtml(e.message)}</div>`;
+      document.querySelector(".sheet").outerHTML = `<div class="error">Couldn't load this resume: ${escapeHtml(e.message)}</div>`;
     });
 
-    sheet.addEventListener("input", () => (saveBtn.hidden = false));
+    let refit;
+    resume.addEventListener("input", () => {
+      saveBtn.hidden = false;
+      clearTimeout(refit);
+      refit = setTimeout(applySize, 400);
+    });
+    sizeSelect.addEventListener("change", applySize);
     saveBtn.addEventListener("click", async () => {
       saveBtn.disabled = true;
       const res = await fetch(`/api/generated/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: toMarkdown(sheet) }),
+        body: JSON.stringify({ content: toMarkdown(resume) }),
       });
       saveBtn.disabled = false;
       saveBtn.textContent = res.ok ? "Saved ✓" : "Save failed";

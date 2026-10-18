@@ -1244,8 +1244,8 @@ def mcp_tools(db, origin):
         mcp.Tool("get_tailored_resume", "Read a saved tailored resume's full Markdown.",
                  {"resume_id": {"type": "integer"}}, ["resume_id"], get_tailored_resume),
         mcp.Tool("save_tailored_resume", "Save a tailored resume for a job so the candidate can open it in the "
-                 "tracker and print it to PDF. content is Markdown: '# Full Name', a contact line, then '## ' "
-                 "sections with '- ' bullets; single column, no tables.",
+                 "tracker and print it to PDF. content must follow this format so it lays out correctly:\n\n"
+                 + ai.RESUME_FORMAT,
                  {"job_id": int_id, "content": {"type": "string"}, "title": {"type": "string"}},
                  ["job_id", "content"], save_tailored_resume),
         mcp.Tool("update_job", "Change a job's status and/or append a note.",

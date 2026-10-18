@@ -753,7 +753,7 @@ function messageHTML(m, i) {
   // A ```resume block becomes a preview card with a "print to PDF" action.
   const parts = m.content.split(/```resume[^\n]*\n([\s\S]*?)(?:```|$)/);
   const html = parts.map((part, j) => j % 2
-    ? `<div class="resume-card"><div class="resume-preview">${renderMarkdown(part)}</div>
+    ? `<div class="resume-card"><div class="resume-preview">${renderResume(part)}</div>
          <div class="row"><button type="button" class="primary" data-save-resume="${i}" data-part="${j}">Open &amp; save as PDF</button>
          <button type="button" data-copy="${i}" data-part="${j}">Copy</button></div></div>`
     : renderMarkdown(part)).join("");

@@ -149,6 +149,35 @@ def complete(config, system, messages, max_tokens=16000):
     return _openai_compatible(config, system, messages, max_tokens)
 
 
+# The layout the tracker's resume page renders (dates right-aligned, bold skill labels…).
+# Shared with the MCP tools so resumes from Claude look the same.
+RESUME_FORMAT = """Resume format (Markdown, single column, no tables or images, so applicant-tracking systems can read it):
+
+# Full Name
+City, ST | phone | email | [LinkedIn](https://full-url) | [GitHub](https://full-url)
+
+## Summary
+Two or three sentences aimed at this job.
+
+## Skills
+- **Category:** skill, skill, skill
+
+## Experience
+### Company Name | City, ST
+**Job Title** | Mon YYYY – Mon YYYY
+- Achievement starting with a strong verb; include the numbers the profile gives
+
+## Education
+### School Name | City, ST
+**Degree, Major** | Mon YYYY – Mon YYYY
+
+## Projects
+### Project Name | Tech, Tech
+- What it does and the result
+
+Rules: use exactly these heading levels and the " | " separators; "Present" for current roles; most recent first; only include contact details and links that appear in the profile (write full URLs); skip sections the profile has nothing for; aim for one page, about 3–5 bullets for recent roles and fewer for older ones."""
+
+
 SYSTEM_PROMPT = """You are a job-application assistant working for one candidate. You help them \
 tailor their resume, answer questions on application forms, and prepare for this specific job.
 
@@ -160,11 +189,9 @@ something the profile doesn't show, say so plainly and suggest an honest way to 
 description's terminology where it truthfully applies.
 - Answers to application-form questions should be ready to paste: no preamble, no "Here is…".
 - Follow the candidate's own instructions below unless they conflict with honesty.
-- When asked for a full resume, put the complete resume in Markdown inside one fenced block \
-that opens with ```resume and closes with ```. Start with "# Full Name", then a contact line, \
-then sections such as "## Summary", "## Experience", "## Skills", "## Education", with "- " \
-bullets. Keep it single-column with no tables or images so applicant-tracking systems can \
-read it. Put any notes for the candidate after the block, not inside it.
+- When asked for a full resume, put the complete resume inside one fenced block that opens with ```resume and closes with ```, in the resume format below. Put any notes for the candidate after the block, not inside it.
+
+{resume_format}
 
 <candidate_instructions>
 {instructions}
@@ -188,6 +215,7 @@ Resume they sent (if any): {resume}
 
 def system_prompt(profile, instructions, job, resume_label=""):
     return SYSTEM_PROMPT.format(
+        resume_format=RESUME_FORMAT,
         instructions=instructions.strip() or "(none)",
         profile=profile.strip() or "(The candidate hasn't filled in a profile yet. Tell them to add "
                                    "one on the Profile tab before you write a resume, and don't make one up.)",

@@ -230,7 +230,14 @@ code.copy { display: block; padding: 8px 10px; user-select: all; word-break: bre
 .msg-actions button, .resume-card .row button { padding: 3px 9px; font-size: 12px; }
 .resume-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin: 6px 0; }
 .resume-preview { max-height: 260px; overflow-y: auto; font-size: 12px; margin-bottom: 8px; }
-.resume-preview h1 { font-size: 16px; }
+.resume-preview h1 { font-size: 16px; text-align: center; margin: 0; }
+.resume-preview .contact { text-align: center; color: var(--muted); margin: 0 0 6px; }
+.resume-preview h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); margin: 10px 0 4px; }
+.resume-preview .entry-head, .resume-preview .entry-sub { display: flex; justify-content: space-between; gap: 8px; }
+.resume-preview .entry-head .l { font-weight: 600; }
+.resume-preview .entry-sub .l, .resume-preview .entry-sub .l strong { font-style: italic; font-weight: 400; }
+.resume-preview .r { color: var(--muted); white-space: nowrap; }
+.resume-preview ul.skills { list-style: none; padding-left: 0; }
 .tailored { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; margin-top: 8px; font-size: 13px; }
 .tailored .row { gap: 8px; margin-top: 4px; }
 .tailored .row a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
