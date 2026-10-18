@@ -62,6 +62,11 @@ SCHEMA = [
          content    TEXT NOT NULL,
          source     TEXT NOT NULL DEFAULT 'app',
          created_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS resume_reviews (
+         generated_id INTEGER PRIMARY KEY,
+         content_hash TEXT NOT NULL,
+         result       TEXT NOT NULL,
+         created_at   TEXT NOT NULL)""",
 ]
 
 
