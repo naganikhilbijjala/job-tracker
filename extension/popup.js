@@ -75,6 +75,49 @@ setup.addEventListener("submit", async (e) => {
   }
 });
 
+function fillForm(job, onlyBlanks = false) {
+  for (const [k, v] of Object.entries(job || {})) {
+    if (form[k] && v && (!onlyBlanks || !form[k].value)) form[k].value = v;
+  }
+  const n = form.description.value.length;
+  document.getElementById("desc-summary").textContent =
+    n ? `Job description (${n.toLocaleString()} chars captured)` : "Job description (none found — paste or highlight it)";
+}
+
+function htmlToText(el) {
+  if (!el) return "";
+  const html = el.innerHTML
+    .replace(/<li[^>]*>/gi, "\n• ")
+    .replace(/<\/?(br|p|div|h\d|ul|ol)\b[^>]*>|<\/li>/gi, "\n");
+  const text = new DOMParser().parseFromString(html, "text/html").documentElement.textContent;
+  return text.split("\n").map((l) => l.replace(/\s+/g, " ").trim()).join("\n")
+    .replace(/•\n+/g, "• ").replace(/^• *$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+async function fetchLinkedIn(url) {
+  const m = (url || "").match(/linkedin\.com\/jobs\/(?:view\/(?:[^/?]*-)?(\d+)|.*[?&]currentJobId=(\d+))/);
+  if (!m) return {};
+  const id = m[1] || m[2];
+  try {
+    const res = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${id}`, { credentials: "omit" });
+    if (!res.ok) return { url: `https://www.linkedin.com/jobs/view/${id}/` };
+    const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+    const text = (sel) => (doc.querySelector(sel)?.textContent || "").replace(/\s+/g, " ").trim();
+    const job = {
+      url: `https://www.linkedin.com/jobs/view/${id}/`,
+      source: "linkedin.com",
+      title: text(".top-card-layout__title"),
+      company: text(".topcard__org-name-link") || text(".topcard__flavor"),
+      location: text(".topcard__flavor--bullet"),
+      salary: text(".compensation__salary"),
+      description: htmlToText(doc.querySelector(".show-more-less-html__markup")),
+    };
+    return Object.fromEntries(Object.entries(job).filter(([, v]) => v));
+  } catch {
+    return { url: `https://www.linkedin.com/jobs/view/${id}/` };
+  }
+}
+
 async function scrapeTab(tab) {
   try {
     const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["scrape.js"] });
@@ -91,10 +134,12 @@ async function init() {
   form.hidden = false;
   setStatus(prefs.status);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const job = (await scrapeTab(tab)) || { url: tab.url, title: tab.title };
-  for (const [k, v] of Object.entries(job)) if (form[k]) form[k].value = v;
-  document.getElementById("desc-summary").textContent =
-    job.description ? `Job description (${job.description.length.toLocaleString()} chars captured)` : "Job description (none found — paste or highlight it)";
+  show(msg, "Reading the job…");
+  let job = (await scrapeTab(tab)) || { url: tab.url, title: tab.title };
+  // LinkedIn's logged-in pages change often; its public guest data is much more reliable.
+  job = { ...job, ...(await fetchLinkedIn(job.url || tab.url)) };
+  fillForm(job);
+  msg.hidden = true;
 
   let resumes, existing;
   try {
@@ -111,6 +156,14 @@ async function init() {
   form.resume_id.innerHTML = `<option value="">— none —</option>` + resumes
     .map((r) => `<option value="${r.id}">${r.label.replace(/[<>&"]/g, "")}</option>`).join("");
   form.resume_id.value = resumes.some((r) => String(r.id) === String(prefs.resume_id)) ? prefs.resume_id : "";
+  // Still missing the basics? Let the tracker read the posting (works for most career sites).
+  if (!existing && (!form.company.value || !form.description.value)) {
+    try {
+      fillForm(await api("/api/import", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: job.url || tab.url }),
+      }), true);
+    } catch { /* keep whatever the page gave us */ }
+  }
   if (existing) {
     show(msg, `Already tracked as <b>${existing.status}</b>${existing.date_applied ? ` (applied ${existing.date_applied})` : ""}. Saving will fill in anything missing.`);
     if (existing.resume_id) form.resume_id.value = existing.resume_id;

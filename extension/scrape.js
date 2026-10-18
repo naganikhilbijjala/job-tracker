@@ -17,7 +17,7 @@
     }
     const marked = html
       .replace(/<li[^>]*>/gi, "\n• ")
-      .replace(/<(br|\/p|\/div|\/h\d|\/ul|\/ol|\/li)[^>]*>/gi, "\n");
+      .replace(/<\/?(br|p|div|h\d|ul|ol)\b[^>]*>|<\/li>/gi, "\n");
     const text = new DOMParser().parseFromString(marked, "text/html").documentElement.textContent;
     return text.split("\n").map((l) => l.replace(/\s+/g, " ").trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   };
@@ -74,6 +74,11 @@
       ".job-details-jobs-unified-top-card__primary-description-container .tvm__text",
       ".job-details-jobs-unified-top-card__bullet", ".topcard__flavor--bullet");
     job.description = first("#job-details", ".jobs-description__content", ".show-more-less-html__markup") || job.description;
+    const parts = document.title.replace(/^\(\d+\)\s*/, "").split(" | ");
+    if (parts.length >= 3 && parts.at(-1) === "LinkedIn") {
+      if (!job.company || job.title === document.title) job.company = parts[1];
+      if (!job.title || job.title.includes(" | ")) job.title = parts[0];
+    }
   } else if (host.includes("indeed.")) {
     job.title = (first('[data-testid="jobsearch-JobInfoHeader-title"]', "h1.jobsearch-JobInfoHeader-title", "h1") || job.title).replace(/\n- job post$/i, "");
     job.company = first('[data-testid="inlineHeader-companyName"]', '[data-company-name="true"]') || job.company;

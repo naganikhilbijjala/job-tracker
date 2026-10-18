@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Job Tracker \u2014 Save Job",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Save the job posting you're viewing to your Job Tracker in one click.",
   "action": {
     "default_title": "Save job to tracker (Alt+Shift+J)",
@@ -23,7 +23,8 @@
   "host_permissions": [
     "https://*.vercel.app/*",
     "http://127.0.0.1:8765/*",
-    "http://localhost:8765/*"
+    "http://localhost:8765/*",
+    "https://www.linkedin.com/*"
   ],
   "browser_specific_settings": {
     "gecko": {
