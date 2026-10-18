@@ -313,3 +313,4 @@ code.copy.pre { white-space: pre; overflow-x: auto; word-break: normal; font-siz
 @media (max-width: 420px) {
   #add-job .label { display: none; }
 }
+#model-status { font-weight: 400; display: block; margin-top: 4px; }

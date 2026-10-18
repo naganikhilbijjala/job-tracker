@@ -5,6 +5,7 @@ OpenAI-style chat completions API, which OpenAI, Gemini, OpenRouter, Groq and
 local servers such as Ollama all accept.
 """
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -101,6 +102,40 @@ def _openai_compatible(config, system, messages, max_tokens):
     if choice.get("finish_reason") == "length":
         text += "\n\n_(The answer was cut off — ask it to continue.)_"
     return text.strip()
+
+
+# Models that can't chat (embeddings, speech, images, video…), hidden from the picker.
+NOT_CHAT = re.compile(r"embed|tts|audio|speech|transcri|whisper|image|imagen|dall-e|veo|aqa|moderation|rerank", re.I)
+
+
+def list_models(config):
+    """Model IDs the key can use, for the settings dropdown."""
+    if not config or not config.get("api_key"):
+        raise AIError("Save your API key first.")
+    provider = config["provider"]
+    if provider == "anthropic":
+        base = (config.get("base_url") or PROVIDERS["anthropic"]["base_url"]).rstrip("/")
+        url = base + "/v1/models?limit=100"
+        headers = {"x-api-key": config["api_key"], "anthropic-version": "2023-06-01"}
+    else:
+        base = (config.get("base_url") or PROVIDERS.get(provider, {}).get("base_url") or "").rstrip("/")
+        if not base:
+            raise AIError("Set the provider's base URL first.")
+        url = base + "/models"
+        headers = {"Authorization": f"Bearer {config['api_key']}"}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as res:
+            data = json.load(res)
+    except urllib.error.HTTPError as e:
+        raise AIError(f"Couldn't list models ({e.code}): {_error_message(e.read().decode('utf-8', 'replace'))}") from None
+    except (urllib.error.URLError, TimeoutError) as e:
+        raise AIError(f"Couldn't reach the provider: {getattr(e, 'reason', e)}") from None
+    models = []
+    for m in data.get("data") or data.get("models") or []:
+        model_id = (m.get("id") or m.get("name") or "").removeprefix("models/")  # Gemini prefixes IDs
+        if model_id and not NOT_CHAT.search(model_id):
+            models.append({"id": model_id, "name": m.get("display_name") or m.get("displayName") or ""})
+    return sorted(models, key=lambda m: m["id"])
 
 
 def complete(config, system, messages, max_tokens=16000):

@@ -603,13 +603,44 @@ function renderAiPanel(config) {
     <p class="muted small">Used by the ✨ Assistant in each job. You pay the provider directly; the key is stored in your tracker's database and never sent back to the browser.</p>
     <form id="ai-form">
       <label class="field">Provider<select name="provider">${options}</select></label>
-      <label class="field">Model<input name="model" value="${esc(config.model)}" placeholder="Model ID from the provider's docs"></label>
+      <label class="field">Model
+        <div class="row">
+          <select id="model-select" hidden></select>
+          <input name="model" value="${esc(config.model)}" placeholder="Model ID from the provider's docs">
+          <button type="button" id="load-models" title="Load the models your key can use">↻ Models</button>
+        </div>
+        <span id="model-status" class="muted small"></span>
+      </label>
       <label class="field" id="base-url-field">Base URL<input name="base_url" value="${esc(config.base_url)}" placeholder=""></label>
       <label class="field">API key<input name="api_key" type="password" autocomplete="off"
         placeholder="${config.has_key ? `Saved (${esc(config.key_hint)}) — leave blank to keep` : "Paste your API key"}"></label>
       <div class="row"><button type="submit" class="primary">Save</button><button type="button" id="ai-test">Test</button></div>
     </form>`;
   syncProviderFields(false);
+  if (config.has_key) loadModels();
+}
+
+async function loadModels() {
+  const f = $("#ai-form");
+  const select = $("#model-select");
+  const status = $("#model-status");
+  status.textContent = "Loading models…";
+  try {
+    const models = await api("/api/ai/models");
+    const current = f.model.value;
+    const options = models.map((m) => `<option value="${esc(m.id)}">${esc(m.name && m.name !== m.id ? `${m.name} — ${m.id}` : m.id)}</option>`);
+    if (current && !models.some((m) => m.id === current)) options.unshift(`<option value="${esc(current)}">${esc(current)}</option>`);
+    if (!current) options.unshift(`<option value="">Choose a model…</option>`);
+    select.innerHTML = options.join("") + `<option value="__other">Other (type an ID)…</option>`;
+    select.value = current;
+    select.hidden = false;
+    f.model.hidden = true;
+    status.textContent = `${models.length} models available with your key`;
+  } catch (e) {
+    select.hidden = true;
+    f.model.hidden = false;
+    status.textContent = e.message;
+  }
 }
 
 function syncProviderFields(providerChanged) {
@@ -650,11 +681,26 @@ document.addEventListener("submit", async (e) => {
   try { await saveAi(); toast("AI settings saved"); } catch (err) { toast(err.message, true); }
 });
 document.addEventListener("change", (e) => {
-  if (e.target.name === "provider" && e.target.closest("#ai-form")) syncProviderFields(true);
+  if (e.target.name === "provider" && e.target.closest("#ai-form")) {
+    syncProviderFields(true);
+    // The model list belongs to the old provider; save, then load again.
+    $("#model-select").hidden = true;
+    $("#ai-form").model.hidden = false;
+    $("#model-status").textContent = "Save, then click ↻ Models to pick from the list.";
+  }
+  if (e.target.id === "model-select") {
+    const input = $("#ai-form").model;
+    const other = e.target.value === "__other";
+    input.hidden = !other;
+    input.value = other ? "" : e.target.value;
+    if (other) input.focus();
+  }
 });
 $("#view-profile").addEventListener("click", async (e) => {
   try {
-    if (e.target.id === "ai-test") {
+    if (e.target.id === "load-models") {
+      await saveAi();  // uses the key just typed, if any
+    } else if (e.target.id === "ai-test") {
       e.target.disabled = true;
       e.target.textContent = "Testing…";
       await saveAi();

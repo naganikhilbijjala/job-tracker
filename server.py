@@ -1014,6 +1014,15 @@ def ai_put(req):
     return json_response({"config": public_ai_config(config)})
 
 
+@route("GET", r"/api/ai/models")
+def ai_models(req):
+    db, _ = backend()
+    try:
+        return json_response(ai.list_models(ai_config(db)))
+    except ai.AIError as e:
+        raise ApiError(400, str(e)) from None
+
+
 @route("POST", r"/api/ai/test")
 def ai_test(req):
     db, _ = backend()
@@ -1124,9 +1133,11 @@ def generated_delete(req, gid):
     return json_response({"ok": True})
 
 
-@route("GET", r"/resume/(\d+)")
+@route("GET", r"/resume/(\d+)", public=True)
 def generated_page(req, gid):
-    return serve_public("/print.html")
+    # Kept outside public/: Vercel serves public/ from its CDN and leaves it out of the
+    # Python bundle. The page holds no data itself; it loads the resume with your login.
+    return response((ROOT / "templates" / "print.html").read_bytes(), "text/html; charset=utf-8")
 
 
 # ---------------------------------------------------------------- MCP (for Claude)
