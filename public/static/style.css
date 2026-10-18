@@ -496,6 +496,15 @@ code.copy.pre { white-space: pre; overflow-x: auto; word-break: normal; font-siz
 @media (max-width: 420px) {
   #add-job .label { display: none; }
 }
+#answer-list { max-height: 440px; overflow-y: auto; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+#answer-filter { margin-top: 4px; }
+.answer { border: 1px solid var(--border); border-radius: 10px; padding: 6px; }
+.answer .row { gap: 4px; }
+.answer .q { border-color: transparent; font-weight: 600; font-size: 12.5px; padding: 4px 6px; background: none; }
+.answer .a { border-color: transparent; background: var(--surface-2); font-size: 13px; padding: 5px 7px; margin-top: 2px; resize: vertical; }
+.answer .q:hover, .answer .a:hover { border-color: var(--border); }
+.answer .row button { margin-top: 0; }
+#answer-add { margin-top: 8px; }
 #model-status { font-weight: 400; display: block; margin-top: 4px; }
 #model-status.error { color: var(--danger); }
 .key-link { float: right; font-weight: 500; }

@@ -199,6 +199,48 @@ class MultiUserTest(unittest.TestCase):
         self.assertEqual((config["provider"], config["model"], config["key_hint"]), ("gemini", "g", "…3333"))
         self.assertEqual(server.ai_config(db)["api_key"], "old-key-3333")
 
+    def test_saved_answers_are_private_and_fill_forms(self):
+        a, f = self.admin, self.friend
+        a.call("POST", "/api/answers", {"items": [{"question": "Desired salary", "answer": "ADMIN SECRET SALARY"}]})
+        admin_answer = a.call("GET", "/api/answers")["json"][0]["id"]
+        # Nobody else can read, change or delete it, or have it fill their forms.
+        self.assertEqual(f.call("GET", "/api/answers")["json"], [])
+        self.assertEqual(f.call("PUT", f"/api/answers/{admin_answer}", {"answer": "hacked"})["status"], 404)
+        self.assertEqual(f.call("DELETE", f"/api/answers/{admin_answer}")["status"], 404)
+        form = [{"id": "f1", "label": "What is your desired salary?", "kind": "text"},
+                {"id": "f2", "label": "Do you have AWS experience?", "kind": "radio", "options": ["Yes", "No"]},
+                {"id": "f3", "label": "Gender", "kind": "select", "options": ["Male", "Female", "Decline"]}]
+        res = f.call("POST", "/api/autofill", {"fields": form, "job": {"url": "https://jobs.example.com/1"}})["json"]
+        self.assertNotIn(b"ADMIN SECRET", json.dumps(res).encode())
+
+        # Their own saved answer fills the form; the AI gets only what's left and isn't personal.
+        f.call("POST", "/api/answers", {"items": [{"question": "Salary expectation", "answer": "$150k"}]})
+        f.call("PUT", "/api/ai", {"provider": "openai", "model": "m", "api_key": "sk-test-key-1234"})
+        asked = []
+        real = server.ai.answer_form
+        server.ai.answer_form = lambda config, profile, instructions, job, questions, saved: (
+            asked.append(([q["label"] for q in questions], job["company"])) or {"f2": "Yes, definitely"})
+        try:
+            res = f.call("POST", "/api/autofill", {"fields": form, "job": {"url": "https://jobs.example.com/1",
+                                                                             "company": "PageCo"}})["json"]
+        finally:
+            server.ai.answer_form = real
+        self.assertEqual(asked, [(["Do you have AWS experience?"], "PageCo")])  # the admin's same-URL job isn't used
+        self.assertEqual({x["id"]: (x["value"], x["source"]) for x in res["answers"]},
+                         {"f1": ("$150k", "saved"), "f2": ("Yes", "ai")})
+        self.assertEqual(res["left"], [{"id": "f3", "label": "Gender", "personal": True}])
+
+        # Remembering skips what's already saved; editing keeps one answer per question.
+        filled = [{"label": "Salary expectation", "kind": "text", "value": "$150k"},
+                  {"label": "Gender", "kind": "select", "options": ["Male", "Female"], "value": "Female"}]
+        cands = f.call("POST", "/api/answers/collect", {"fields": filled, "company": "PageCo"})["json"]["candidates"]
+        self.assertEqual([c["question"] for c in cands], ["Gender"])
+        mine = f.call("GET", "/api/answers")["json"][0]["id"]
+        self.assertEqual(f.call("PUT", f"/api/answers/{mine}", {"answer": "$160k"})["json"]["answer"], "$160k")
+        self.assertEqual(f.call("DELETE", f"/api/answers/{mine}")["status"], 200)
+        self.assertEqual(f.call("GET", "/api/answers")["json"], [])
+        self.assertEqual(a.call("GET", "/api/answers")["json"][0]["answer"], "ADMIN SECRET SALARY")
+
     def test_mcp_tokens_are_per_user(self):
         friend_token = self.friend.call("GET", "/api/mcp")["json"]["token"]
         self.assertNotEqual(friend_token, self.a_mcp)

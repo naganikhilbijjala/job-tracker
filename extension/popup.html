@@ -31,6 +31,23 @@
     .msg.ok { color: var(--ok); }
     .msg.err { color: var(--danger); }
     .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
+    #apply { margin: 12px 14px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+    #apply .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    #apply .head span { color: var(--muted); font-size: 11px; }
+    #apply .row { display: flex; gap: 6px; }
+    #apply .row button { flex: 1; padding: 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg);
+      color: var(--text); font: inherit; cursor: pointer; }
+    #apply .row button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    #apply button:disabled { opacity: .6; cursor: default; }
+    #apply .msg { margin: 8px 0 0; }
+    #apply ul { margin: 4px 0 0; padding-left: 16px; }
+    .legend { display: flex; gap: 10px; margin-top: 6px; font-size: 11px; color: var(--muted); }
+    .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+    #remember-list { margin-top: 8px; }
+    #remember-list label { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; color: var(--text); font-size: 12px; margin: 0 0 6px; }
+    #remember-list input { width: auto; margin: 2px 0 0; }
+    #remember-list small { display: block; color: var(--muted); overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   </style>
 </head>
 <body>
@@ -42,6 +59,15 @@
     <button id="connect" class="primary" type="submit">Connect</button>
     <div class="hint">The address, and a connection code if you sign in with Google, are on the tracker's Resumes tab.</div>
   </form>
+  <section id="apply" hidden>
+    <div class="head"><b>Application form</b><span id="apply-count"></span></div>
+    <div class="row">
+      <button type="button" id="fill" class="primary">✨ Fill empty fields</button>
+      <button type="button" id="remember">Remember my answers</button>
+    </div>
+    <div id="apply-msg" class="msg" hidden></div>
+    <div id="remember-list" hidden></div>
+  </section>
   <form id="f" hidden>
     <div id="msg" class="msg" hidden></div>
     <div class="statuses" id="statuses">
@@ -68,5 +94,6 @@
     <div class="hint">Tip: if the description is wrong, highlight it on the page and reopen this popup.</div>
   </form>
   <script src="popup.js"></script>
+  <script src="apply.js"></script>
 </body>
 </html>

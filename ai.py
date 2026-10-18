@@ -273,11 +273,11 @@ Company: {company}
 def _json_object(text):
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end <= start:
-        raise AIError("The AI's review wasn't in the expected format. Try again.")
+        raise AIError("The AI's reply wasn't in the expected format. Try again.")
     try:
         return json.loads(text[start:end + 1])
     except ValueError:
-        raise AIError("The AI's review wasn't in the expected format. Try again.") from None
+        raise AIError("The AI's reply wasn't in the expected format. Try again.") from None
 
 
 def review_resume(config, profile, job, resume):
@@ -303,3 +303,52 @@ def review_resume(config, profile, job, resume):
         "weaknesses": [{k: str(w.get(k, "")) for k in ("issue", "fix")}
                        for w in as_list(data.get("weaknesses")) if isinstance(w, dict) and w.get("issue")][:3],
     }
+
+
+FORM_PROMPT = """You fill in a job application form for the candidate, using only facts from their profile.
+
+Rules:
+- Never invent experience, skills, numbers, employers, dates or credentials. If the profile doesn't support an answer, use null.
+- Yes/no questions about experience or skills: "Yes" only when the profile clearly shows it, otherwise null so the candidate decides. Never answer "No" on their behalf.
+- When a question lists options, answer with one option exactly as written, or null.
+- "How many years" questions: count from the dates in the profile, round down, and answer with just the number. null if the profile has no dates for it.
+- Open questions (why this company, what excites you, tell us about…): 2–4 sentences in the first person, specific to this job and grounded in the profile. Ready to paste: no greeting, sign-off or placeholders.
+- Short text fields: a short answer, not a sentence, unless the question asks for one.
+- Stay consistent with the candidate's earlier answers, and follow their instructions where they apply.
+
+Reply with only a JSON object mapping every question id to its answer or null, like {{"q1": "Yes", "q2": null}}.
+
+<candidate_profile>
+{profile}
+</candidate_profile>
+
+<candidate_instructions>
+{instructions}
+</candidate_instructions>
+
+<earlier_answers>
+{saved}
+</earlier_answers>
+
+<job>
+Title: {title}
+Company: {company}
+
+{description}
+</job>"""
+
+
+def answer_form(config, profile, instructions, job, questions, saved=()):
+    """Answer application questions [{id, label, kind, options}] in one request. Returns {id: answer}."""
+    if not profile.strip():
+        raise AIError("Fill in your Profile tab first. Answers come only from it.")
+    system = FORM_PROMPT.format(
+        profile=profile.strip(), instructions=instructions.strip() or "(none)",
+        saved="\n".join(f"Q: {s['question']}\nA: {s['answer']}" for s in saved[:60]) or "(none)",
+        title=job.get("title") or "", company=job.get("company") or "",
+        description=(job.get("description") or "(No job description available.)")[:15000])
+    listed = [{"id": q["id"], "question": q["label"], "type": q["kind"], **({"options": q["options"]} if q["options"] else {})}
+              for q in questions]
+    data = _json_object(complete(config, system, [{"role": "user", "content": json.dumps(listed, ensure_ascii=False)}],
+                                 max_tokens=6000))
+    return {str(k): str(v).strip() for k, v in data.items() if v not in (None, "") and str(v).strip().lower() != "null"}

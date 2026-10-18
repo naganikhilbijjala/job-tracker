@@ -31,6 +31,7 @@ from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 import ai
+import autofill
 import database
 import gdrive
 import mcp
@@ -927,6 +928,7 @@ def admin_delete_user(req, uid):
         ("DELETE FROM generated_resumes WHERE user_id = ?", (uid,)),
         ("DELETE FROM jobs WHERE user_id = ?", (uid,)),
         ("DELETE FROM resumes WHERE user_id = ?", (uid,)),
+        ("DELETE FROM answers WHERE user_id = ?", (uid,)),
         ("DELETE FROM user_settings WHERE user_id = ?", (uid,)),
         ("DELETE FROM users WHERE id = ?", (uid,)),
     ])
@@ -1297,6 +1299,135 @@ def ai_test(req):
     except ai.AIError as e:
         raise ApiError(400, str(e)) from None
     return json_response({"reply": reply[:200]})
+
+
+# ---------------------------------------------------------------- routes: application form answers
+
+def saved_answers(db):
+    return db.query("SELECT id, question, answer, updated_at FROM answers WHERE user_id = ? ORDER BY updated_at DESC, id DESC",
+                    (db.uid,))
+
+
+def account_facts(db):
+    """Contact facts for filling forms: from the profile, with the signed-in account as a fallback."""
+    rows = db.query("SELECT email, name FROM users WHERE id = ?", (db.uid,)) if MULTI_USER else []
+    account = rows[0] if rows else {"email": "", "name": ""}
+    return autofill.profile_facts(db.get_setting("profile") or "", account["email"], account["name"])
+
+
+def save_answers(db, items):
+    rows, keys = [], set()
+    for item in items if isinstance(items, list) else []:
+        question = autofill.clean_label(item.get("question") if isinstance(item, dict) else "")
+        answer = str(item.get("answer") or "").strip()[:5000] if isinstance(item, dict) else ""
+        key = autofill.question_key(question)
+        if key and answer and key not in keys:
+            keys.add(key)
+            rows.append(("INSERT INTO answers (user_id, qkey, question, answer, updated_at) VALUES (?, ?, ?, ?, ?) "
+                         "ON CONFLICT(user_id, qkey) DO UPDATE SET question = excluded.question, "
+                         "answer = excluded.answer, updated_at = excluded.updated_at",
+                         (db.uid, key, question, answer, now())))
+    existing = {r["qkey"] for r in db.query("SELECT qkey FROM answers WHERE user_id = ?", (db.uid,))}
+    if len(existing | keys) > autofill.MAX_SAVED:
+        raise ApiError(400, f"You can save up to {autofill.MAX_SAVED} answers. Delete some on the Profile tab first.")
+    if rows:
+        db.run_many(rows)
+    return len(rows)
+
+
+def find_answer(db, answer_id):
+    rows = db.query("SELECT * FROM answers WHERE id = ? AND user_id = ?", (answer_id, db.uid))
+    if not rows:
+        raise ApiError(404, "Answer not found")
+    return rows[0]
+
+
+@route("GET", r"/api/answers")
+def answers_list(req):
+    db, _ = backend()
+    return json_response(saved_answers(db))
+
+
+@route("POST", r"/api/answers")
+def answers_add(req):
+    """Save answers [{question, answer}]; a question already saved gets the new answer."""
+    db, _ = backend()
+    saved = save_answers(db, req.json().get("items"))
+    return json_response({"saved": saved, "answers": saved_answers(db)})
+
+
+@route("PUT", r"/api/answers/(\d+)")
+def answers_update(req, answer_id):
+    db, _ = backend()
+    old = find_answer(db, answer_id)
+    data = req.json()
+    question = autofill.clean_label(data.get("question", old["question"]))
+    answer = str(data.get("answer", old["answer"])).strip()[:5000]
+    key = autofill.question_key(question)
+    if not key or not answer:
+        raise ApiError(400, "Both the question and the answer are needed")
+    clash = db.query("SELECT id FROM answers WHERE user_id = ? AND qkey = ? AND id != ?", (db.uid, key, answer_id))
+    if clash:
+        raise ApiError(400, "You already have an answer saved for that question")
+    db.execute("UPDATE answers SET qkey = ?, question = ?, answer = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+               (key, question, answer, now(), answer_id, db.uid))
+    return json_response(find_answer(db, answer_id))
+
+
+@route("DELETE", r"/api/answers/(\d+)")
+def answers_delete(req, answer_id):
+    db, _ = backend()
+    find_answer(db, answer_id)
+    db.execute("DELETE FROM answers WHERE id = ? AND user_id = ?", (answer_id, db.uid))
+    return json_response({"ok": True})
+
+
+@route("POST", r"/api/answers/collect")
+def answers_collect(req):
+    """From a filled-in form, the answers worth remembering (new or changed, not about this one company)."""
+    db, _ = backend()
+    data = req.json()
+    fields = autofill.clean_fields(data.get("fields"))
+    return json_response({"candidates": autofill.worth_saving(fields, saved_answers(db), account_facts(db),
+                                                               str(data.get("company") or ""))})
+
+
+@route("POST", r"/api/autofill")
+def autofill_form(req):
+    """Answers for a form's empty fields: profile facts and saved answers first, then one AI request."""
+    db, _ = backend()
+    data = req.json()
+    fields = autofill.clean_fields(data.get("fields"))
+    page = data.get("job") if isinstance(data.get("job"), dict) else {}
+    job = {k: str(page.get(k) or "")[:50000] for k in ("title", "company", "description")}
+    url = normalize_url(str(page.get("url") or ""))
+    if url:  # the tracker's saved copy has the full description, even on a form page that doesn't show it
+        rows = db.query("SELECT title, company, description FROM jobs WHERE user_id = ? AND url = ? AND url != ''",
+                        (db.uid, url))
+        if rows:
+            job = {k: rows[0][k] or job[k] for k in job}
+    saved = saved_answers(db)
+    answers, rest = autofill.match(fields, saved, account_facts(db))
+    for_ai = [f for f in rest if not autofill.is_personal(f["label"])]
+    ai_error = ""
+    config = ai_config(db)
+    if for_ai and data.get("use_ai", True) and config.get("api_key"):
+        try:
+            replies = ai.answer_form(config, db.get_setting("profile") or "", db.get_setting("ai_instructions") or "",
+                                     job, for_ai, saved)
+        except ai.AIError as e:
+            ai_error = str(e)
+        else:
+            for f in for_ai:
+                value = autofill.fit_answer(replies.get(f["id"]), f)
+                if value is not None:
+                    answers.append({"id": f["id"], "value": value, "source": "ai"})
+    elif for_ai and not config.get("api_key"):
+        ai_error = "Set up an AI provider on the Profile tab to answer the rest."
+    done = {a["id"] for a in answers}
+    return json_response({"answers": answers, "ai_error": ai_error,
+                          "left": [{"id": f["id"], "label": f["label"], "personal": autofill.is_personal(f["label"])}
+                                   for f in fields if f["id"] not in done]})
 
 
 def assistant_prompt(db, job):

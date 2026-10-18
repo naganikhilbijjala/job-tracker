@@ -22,6 +22,7 @@ Your local data goes in `data/`, which git ignores. To try the AI features, add 
 | `database.py` | Local SQLite, or Turso when `TURSO_DATABASE_URL` is set |
 | `ai.py` | AI providers and prompts |
 | `scoring.py` | Resume keyword and format scoring |
+| `autofill.py` | Matching application-form questions to profile facts and saved answers |
 | `tests/` | Automated tests (standard library `unittest`) |
 | `mcp.py`, `mcp_bridge.py` | MCP server for Claude |
 | `gdrive.py` | Google Drive backup |

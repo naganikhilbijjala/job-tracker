@@ -68,6 +68,18 @@ Install it in Chrome:
 
 It works with LinkedIn, Indeed, Workday, Greenhouse, Lever, Ashby, Glassdoor, and most company career pages. On an unusual site, **highlight the job description** before clicking, and it will use that text.
 
+### Filling application forms
+
+On an application form (LinkedIn Easy Apply, Greenhouse, Lever and most others), open the extension and click **✨ Fill empty fields**. It only touches empty fields, so it works alongside Simplify, and it never submits or clicks Next for you. Each answer comes from, in order:
+
+1. **Your profile**: LinkedIn, GitHub, website, email, phone and name.
+2. **Answers you saved**: the same question, or the same kind of question worded differently (one sponsorship answer covers "Do you require sponsorship?" and "Will you now or in the future need a visa?").
+3. **The AI**, in one request, for the rest: yes/no experience questions, "How many years…", and "Why this company?". It uses only your profile and says "Yes" only when the profile shows it.
+
+Filled fields are outlined: **green** from your profile or saved answers, **purple** written by the AI (check these). Salary, sponsorship, work authorization, start date, demographics and consent questions are never guessed; they're left for you. After answering them, click **Remember my answers** and they fill in on the next form. Review or edit saved answers on the **Profile** tab.
+
+Reload the extension after updating (`chrome://extensions` → ↻) to get new features. For a form inside an embedded frame (some company sites embed Greenhouse), open the form on its own page first.
+
 The **paste-a-link** auto-fill in the app itself works for Greenhouse, Lever, Ashby and most company career sites. LinkedIn usually blocks it, so use the extension or Android's Share menu for LinkedIn.
 
 ---
@@ -168,8 +180,9 @@ This project is open source under the [MIT License](LICENSE). Bug reports, ideas
 | `gdrive.py` | Google sign-in, plus Drive OAuth + upload |
 | `ai.py` | AI providers (Anthropic + OpenAI-compatible), the assistant's prompt, and the AI resume review |
 | `scoring.py` | Resume score: keyword match with the job description and format checks (no AI) |
+| `autofill.py` | Matching application-form questions to profile facts and saved answers |
 | `mcp.py`, `mcp_bridge.py` | MCP server for Claude, and the Claude Desktop bridge |
 | `public/` | The web pages, icons, and home-screen app manifest |
 | `templates/print.html` | The tailored resume page (edit, score, print to PDF) |
-| `extension/` | Chrome/Firefox "Save job" extension |
+| `extension/` | Chrome/Firefox extension: save a job, fill application forms |
 | `pyproject.toml` | Tells Vercel how to run the app |

@@ -77,6 +77,16 @@ SCHEMA = [
          job_limit  INTEGER,
          created_at TEXT NOT NULL,
          last_login TEXT)""",
+    # Answers to application-form questions, saved by the browser extension so the next form fills itself.
+    # qkey is the question in canonical form (autofill.question_key).
+    """CREATE TABLE IF NOT EXISTS answers (
+         id         INTEGER PRIMARY KEY,
+         user_id    INTEGER NOT NULL,
+         qkey       TEXT NOT NULL,
+         question   TEXT NOT NULL,
+         answer     TEXT NOT NULL,
+         updated_at TEXT NOT NULL,
+         UNIQUE (user_id, qkey))""",
     """CREATE TABLE IF NOT EXISTS user_settings (
          user_id INTEGER NOT NULL,
          key     TEXT NOT NULL,

@@ -822,12 +822,14 @@ let aiProviders = {};
 async function loadProfile() {
   if (profileLoaded) return;
   try {
-    const [profile, aiInfo, mcpInfo] = await Promise.all([api("/api/profile"), api("/api/ai"), api("/api/mcp")]);
+    const [profile, aiInfo, mcpInfo, answers] = await Promise.all([
+      api("/api/profile"), api("/api/ai"), api("/api/mcp"), api("/api/answers")]);
     $("#profile-text").value = profile.profile;
     $("#instructions-text").value = profile.instructions;
     aiProviders = aiInfo.providers;
     renderAiPanel(aiInfo.config);
     renderMcpPanel(mcpInfo);
+    renderAnswers(answers);
     profileLoaded = true;
   } catch (e) {
     toast(e.message, true);
@@ -945,6 +947,63 @@ async function saveAi() {
   renderAiPanel(config);
 }
 
+// Answers for application forms, saved from the browser extension ("Remember my answers").
+function renderAnswers(answers) {
+  const item = (a) => `<div class="answer" data-answer="${a.id}">
+      <div class="row"><input class="q" value="${esc(a.question)}" title="${esc(a.question)}" aria-label="Question">
+        <button type="button" class="icon small danger" data-delete-answer="${a.id}" title="Delete" aria-label="Delete">✕</button></div>
+      <textarea class="a" rows="${Math.min(6, Math.max(1, Math.ceil(a.answer.length / 42)))}" aria-label="Answer">${esc(a.answer)}</textarea>
+    </div>`;
+  $("#answers-panel").innerHTML = `
+    <h3>Saved answers <span class="muted small">${answers.length || ""}</span></h3>
+    <p class="muted small">The browser extension fills application forms from your profile and these answers. Questions
+      like salary, sponsorship or demographics are only ever filled from here, never guessed. In the extension, use
+      <b>Remember my answers</b> after filling a form to add more.</p>
+    ${answers.length > 4 ? `<input type="search" id="answer-filter" placeholder="Filter answers" autocomplete="off">` : ""}
+    <div id="answer-list">${answers.map(item).join("") || `<div class="empty">No saved answers yet.</div>`}</div>
+    <details><summary>Add an answer</summary>
+      <form id="answer-add">
+        <label class="field">Question<input name="question" placeholder="e.g. Will you require visa sponsorship?" required></label>
+        <label class="field">Answer<textarea name="answer" rows="2" required></textarea></label>
+        <button type="submit" class="primary">Add</button>
+      </form></details>`;
+}
+
+async function reloadAnswers() {
+  renderAnswers(await api("/api/answers"));
+}
+
+$("#view-profile").addEventListener("input", (e) => {
+  if (e.target.id !== "answer-filter") return;
+  const words = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+  $$("#answer-list .answer").forEach((el) => {
+    const hay = (el.querySelector(".q").value + " " + el.querySelector(".a").value).toLowerCase();
+    el.hidden = !words.every((w) => hay.includes(w));
+  });
+});
+$("#view-profile").addEventListener("change", async (e) => {
+  const row = e.target.closest("[data-answer]");
+  if (!row || !e.target.matches(".q, .a")) return;
+  try {
+    await api(`/api/answers/${row.dataset.answer}`, { method: "PUT",
+      json: { question: row.querySelector(".q").value, answer: row.querySelector(".a").value } });
+    toast("Answer saved");
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+document.addEventListener("submit", async (e) => {
+  if (e.target.id !== "answer-add") return;
+  e.preventDefault();
+  try {
+    const data = Object.fromEntries(new FormData(e.target));
+    renderAnswers((await api("/api/answers", { method: "POST", json: { items: [data] } })).answers);
+    toast("Answer added");
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 function renderMcpPanel({ url, token }) {
   // Running locally we know the project folder; on Vercel the user fills it in.
   const folder = state.meta.resume_dir ? state.meta.resume_dir.replace(/\/data\/resumes$/, "") : "/path/to/job-tracker";
@@ -995,6 +1054,12 @@ $("#view-profile").addEventListener("click", async (e) => {
       await saveAi();
       const { reply } = await api("/api/ai/test", { method: "POST" });
       toast(`Connected ✓ — the model replied “${reply}”`);
+    } else if (e.target.dataset.deleteAnswer) {
+      const row = e.target.closest("[data-answer]");
+      if (!await ask({ title: "Delete this saved answer?", body: row.querySelector(".q").value, ok: "Delete", danger: true })) return;
+      await api(`/api/answers/${e.target.dataset.deleteAnswer}`, { method: "DELETE" });
+      await reloadAnswers();
+      toast("Deleted");
     } else if (e.target.id === "mcp-rotate") {
       if (!await ask({ title: "Make a new token?", body: "Claude apps using the old token stop working until you update them.",
                        ok: "Make new token", danger: true })) return;
