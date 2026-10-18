@@ -1194,16 +1194,35 @@ def drive_disconnect(req):
 
 # ---------------------------------------------------------------- routes: profile & AI assistant
 
-def ai_config(db):
+def ai_settings(db):
+    """Saved AI settings: the chosen provider, plus a key, model and base URL for each provider
+    used, so switching provider and back doesn't lose a key."""
     raw = db.get_setting("ai_config")
-    return json.loads(raw) if raw else {}
+    saved = json.loads(raw) if raw else {}
+    if saved and "providers" not in saved:  # older format: one key, for whichever provider was chosen
+        provider = saved.get("provider", "anthropic")
+        saved = {"provider": provider,
+                 "providers": {provider: {k: saved.get(k, "") for k in ("api_key", "model", "base_url")}}}
+    return saved
 
 
-def public_ai_config(config):
-    key = config.get("api_key") or ""
-    return {"provider": config.get("provider", "anthropic"), "model": config.get("model", ""),
-            "base_url": config.get("base_url", ""), "has_key": bool(key),
-            "key_hint": f"…{key[-4:]}" if len(key) > 8 else ""}
+def ai_config(db, provider=None):
+    """The settings for one provider (the chosen one by default), as ai.complete expects them."""
+    saved = ai_settings(db)
+    provider = provider or saved.get("provider")
+    if not provider:
+        return {}
+    return {"provider": provider, **saved.get("providers", {}).get(provider, {})}
+
+
+def public_ai_config(saved):
+    def public(c):
+        key = c.get("api_key") or ""
+        return {"model": c.get("model", ""), "base_url": c.get("base_url", ""), "has_key": bool(key),
+                "key_hint": f"…{key[-4:]}" if len(key) > 8 else ""}
+    provider = saved.get("provider", "anthropic")
+    per_provider = {p: public(c) for p, c in saved.get("providers", {}).items()}
+    return {"provider": provider, **per_provider.get(provider, public({})), "saved": per_provider}
 
 
 @route("GET", r"/api/profile")
@@ -1227,9 +1246,9 @@ def profile_put(req):
 @route("GET", r"/api/ai")
 def ai_get(req):
     db, _ = backend()
-    providers = {k: {"label": v["label"], "base_url": v["base_url"], "model": v["model"]}
+    providers = {k: {"label": v["label"], "base_url": v["base_url"], "model": v["model"], "keys_url": v["keys_url"]}
                  for k, v in ai.PROVIDERS.items()}
-    return json_response({"config": public_ai_config(ai_config(db)), "providers": providers})
+    return json_response({"config": public_ai_config(ai_settings(db)), "providers": providers})
 
 
 @route("PUT", r"/api/ai")
@@ -1239,23 +1258,32 @@ def ai_put(req):
     provider = str(data.get("provider", "anthropic"))
     if provider not in ai.PROVIDERS:
         raise ApiError(400, f"Unknown provider '{provider}'")
-    old = ai_config(db)
-    config = {
-        "provider": provider,
+    saved = ai_settings(db)
+    old = saved.get("providers", {}).get(provider, {})
+    saved.setdefault("providers", {})[provider] = {
         "model": str(data.get("model", "")).strip() or ai.PROVIDERS[provider]["model"],
         "base_url": str(data.get("base_url", "")).strip(),
         # A blank key means "keep the saved one" (the browser never gets the key back).
         "api_key": str(data.get("api_key", "")).strip() or old.get("api_key", ""),
     }
-    db.set_setting("ai_config", json.dumps(config))
-    return json_response({"config": public_ai_config(config)})
+    saved["provider"] = provider
+    db.set_setting("ai_config", json.dumps(saved))
+    return json_response({"config": public_ai_config(saved)})
 
 
-@route("GET", r"/api/ai/models")
+@route("POST", r"/api/ai/models")
 def ai_models(req):
+    """Models for a provider, using the key just typed (not saved yet) or the one saved for it."""
     db, _ = backend()
+    data = req.json()
+    provider = str(data.get("provider", ""))
+    if provider not in ai.PROVIDERS:
+        raise ApiError(400, f"Unknown provider '{provider}'")
+    config = ai_config(db, provider)
+    config["api_key"] = str(data.get("api_key", "")).strip() or config.get("api_key", "")
+    config["base_url"] = str(data.get("base_url", config.get("base_url", ""))).strip()
     try:
-        return json_response(ai.list_models(ai_config(db)))
+        return json_response(ai.list_models(config))
     except ai.AIError as e:
         raise ApiError(400, str(e)) from None
 

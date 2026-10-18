@@ -168,6 +168,37 @@ class MultiUserTest(unittest.TestCase):
 
         self.assert_admin_data_intact()
 
+    def test_ai_keys_are_per_provider_and_per_user(self):
+        f = self.friend
+        f.call("PUT", "/api/ai", {"provider": "anthropic", "model": "claude-x", "api_key": "sk-ant-friend-1111"})
+        f.call("PUT", "/api/ai", {"provider": "openai", "model": "gpt-x", "api_key": "sk-openai-friend-2222"})
+        # Switching back with a blank key keeps the key saved for that provider.
+        res = f.call("PUT", "/api/ai", {"provider": "anthropic", "model": "claude-x", "api_key": ""})
+        config = res["json"]["config"]
+        self.assertEqual((config["provider"], config["has_key"], config["key_hint"]), ("anthropic", True, "…1111"))
+        self.assertEqual(config["saved"]["openai"], {"model": "gpt-x", "base_url": "", "has_key": True, "key_hint": "…2222"})
+        self.assertNotIn(b"sk-", f.call("GET", "/api/ai")["body"])  # keys never go back to the browser
+
+        # The model list uses the key saved for the provider asked about, or one just typed.
+        seen = []
+        real = server.ai.list_models
+        server.ai.list_models = lambda c: seen.append((c["provider"], c["api_key"])) or []
+        try:
+            f.call("POST", "/api/ai/models", {"provider": "openai"})
+            f.call("POST", "/api/ai/models", {"provider": "groq", "api_key": "gsk-typed"})
+            self.admin.call("POST", "/api/ai/models", {"provider": "openai"})
+        finally:
+            server.ai.list_models = real
+        self.assertEqual(seen, [("openai", "sk-openai-friend-2222"), ("groq", "gsk-typed"), ("openai", "")])
+        self.assertEqual(f.call("POST", "/api/ai/models", {"provider": "nope"})["status"], 400)
+
+        # Settings saved before keys were per provider still load.
+        db = server.database.UserDB(server.store()[0], self.friend_id)
+        db.set_setting("ai_config", json.dumps({"provider": "gemini", "model": "g", "base_url": "", "api_key": "old-key-3333"}))
+        config = f.call("GET", "/api/ai")["json"]["config"]
+        self.assertEqual((config["provider"], config["model"], config["key_hint"]), ("gemini", "g", "…3333"))
+        self.assertEqual(server.ai_config(db)["api_key"], "old-key-3333")
+
     def test_mcp_tokens_are_per_user(self):
         friend_token = self.friend.call("GET", "/api/mcp")["json"]["token"]
         self.assertNotEqual(friend_token, self.a_mcp)

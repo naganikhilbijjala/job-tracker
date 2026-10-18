@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Resume</title>
-  <link rel="icon" href="/icon-192.png">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/icon-192.png" type="image/png">
+  <script>try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}</script>
   <style>
     :root {
       --ink: #111418; --muted: #4b5563; --rule: #9aa3ae; --accent: #2f6fed;
@@ -13,9 +15,15 @@
       --chip-bg: #eef0f3;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --bar-bg: #171b21; --bar-border: #2b313a; --bar-ink: #e6e8eb; --desk: #0f1216; --panel-muted: #9aa3ae;
+      :root:not([data-theme="light"]) {
+              --bar-bg: #171b21; --bar-border: #2b313a; --bar-ink: #e6e8eb; --desk: #0f1216; --panel-muted: #9aa3ae;
               --good-bg: #16331f; --good: #6fd391; --warn-bg: #3a2c09; --warn: #f2c25b; --bad-bg: #3d1717; --bad: #ff8a80;
               --chip-bg: #232931; }
+    }
+    :root[data-theme="dark"] {
+      --bar-bg: #171b21; --bar-border: #2b313a; --bar-ink: #e6e8eb; --desk: #0f1216; --panel-muted: #9aa3ae;
+      --good-bg: #16331f; --good: #6fd391; --warn-bg: #3a2c09; --warn: #f2c25b; --bad-bg: #3d1717; --bad: #ff8a80;
+      --chip-bg: #232931;
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--desk); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Job Tracker</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f86ff"/>
+      <stop offset="1" stop-color="#2a4fd6"/>
+    </linearGradient>
+    <!-- the starting point is a ring: its centre is cut out so the background shows through -->
+    <mask id="ring" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#fff"/>
+      <circle cx="128" cy="286" r="31" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <g transform="translate(256 256) scale(0.94) translate(-256 -264)">
+    <circle cx="384" cy="156" r="82" fill="#fff" fill-opacity=".16"/>
+    <g fill="#fff" mask="url(#ring)">
+      <path d="M128 286 L218 372 L384 156" fill="none" stroke="#fff" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="128" cy="286" r="56"/>
+      <circle cx="384" cy="156" r="50"/>
+    </g>
+  </g>
+</svg>
