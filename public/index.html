@@ -29,6 +29,7 @@
         <button data-view="board">Board</button>
         <button data-view="table">List</button>
         <button data-view="resumes">Resumes</button>
+        <button data-view="profile">Profile</button>
       </nav>
       <input id="search" type="search" placeholder="Search company, title, notes…" autocomplete="off">
       <button id="add-job" class="primary" aria-label="Add job">+ <span class="label">Add job</span></button>
@@ -65,16 +66,39 @@
           </div>
         </div>
       </section>
+
+      <section id="view-profile" class="view">
+        <div class="resume-grid">
+          <div>
+            <label class="field">Your profile
+              <textarea id="profile-text" rows="20" placeholder="Paste your full resume here — every role with dates and bullet points, projects, skills, education, certifications, links. Include more than fits on one page: the assistant picks what's relevant for each job, and it will only use facts from here."></textarea>
+            </label>
+            <label class="field">Instructions for the assistant
+              <textarea id="instructions-text" rows="6" placeholder="e.g. One page. US English. Lead with backend and distributed systems work. Quantify impact. My target roles are senior backend / platform engineer."></textarea>
+            </label>
+            <div class="row"><button id="save-profile" class="primary">Save profile</button><span id="profile-status" class="muted small"></span></div>
+            <p class="muted small">Tip: have a PDF resume? Ask Claude “Convert this resume to plain text, keeping every detail” and paste the result above.</p>
+          </div>
+          <div class="side">
+            <aside id="ai-panel" class="panel"></aside>
+            <aside id="mcp-panel" class="panel"></aside>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
   <div id="scrim" hidden></div>
   <aside id="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <h2 id="drawer-title">Add job</h2>
+      <button type="button" class="icon" data-close aria-label="Close">✕</button>
+    </div>
+    <nav class="drawer-tabs" id="drawer-tabs">
+      <button type="button" data-pane="details" class="active">Details</button>
+      <button type="button" data-pane="assistant">✨ Assistant</button>
+    </nav>
     <form id="job-form" autocomplete="off">
-      <div class="drawer-head">
-        <h2 id="drawer-title">Add job</h2>
-        <button type="button" class="icon" data-close aria-label="Close">✕</button>
-      </div>
       <div class="drawer-body">
         <label class="field">Job posting link
           <div class="row">
@@ -110,9 +134,28 @@
         <button type="submit" class="primary">Save</button>
       </div>
     </form>
+    <section id="assistant" class="assistant" hidden>
+      <div class="assistant-scroll" id="assistant-scroll">
+        <div id="ai-note" class="muted small"></div>
+        <div id="tailored-list"></div>
+        <div id="chat-log" class="chat-log"></div>
+      </div>
+      <div class="chips" id="chips">
+        <button type="button" data-prompt="tailor">📄 Tailor resume</button>
+        <button type="button" data-prompt="skills">🧩 10 skills to add</button>
+        <button type="button" data-prompt="why">💬 Why this company?</button>
+        <button type="button" data-prompt="cover">✉️ Cover letter</button>
+        <button type="button" data-prompt="match">🎯 How well do I match?</button>
+      </div>
+      <form id="chat-form" class="composer">
+        <textarea name="message" rows="2" placeholder="Ask about this job, e.g. paste a question from the application form…" required></textarea>
+        <button type="submit" class="primary">Send</button>
+      </form>
+    </section>
   </aside>
 
   <div id="toast" role="status"></div>
+  <script src="/static/markdown.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

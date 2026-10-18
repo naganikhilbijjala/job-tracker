@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resume</title>
+  <link rel="icon" href="/icon-192.png">
+  <style>
+    :root {
+      --ink: #111418; --muted: #4b5563; --rule: #c9ced6; --accent: #2f6fed;
+      --bar-bg: #f6f7f9; --bar-border: #e1e4e8; --desk: #e9ecf0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bar-bg: #171b21; --bar-border: #2b313a; --desk: #0f1216; }
+      .toolbar { color: #e6e8eb; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--desk); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .toolbar {
+      position: sticky; top: 0; z-index: 2; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      padding: 10px 16px; background: var(--bar-bg); border-bottom: 1px solid var(--bar-border);
+    }
+    .toolbar .title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .toolbar .hint { font-size: 12px; opacity: .7; flex-basis: 100%; }
+    button, a.btn {
+      font: inherit; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--bar-border);
+      background: transparent; color: inherit; cursor: pointer; text-decoration: none;
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    /* the page itself: US Letter proportions on screen, real margins in print */
+    .sheet {
+      max-width: 8.5in; margin: 24px auto; padding: 0.6in 0.7in; background: #fff; color: var(--ink);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, .12); min-height: 11in;
+      font: 10.5pt/1.38 "Calibri", "Carlito", "Helvetica Neue", Arial, sans-serif;
+    }
+    .sheet:focus { outline: 2px dashed var(--accent); outline-offset: 4px; }
+    .sheet h1 { font-size: 20pt; margin: 0 0 2pt; letter-spacing: .2pt; }
+    .sheet h1 + p { color: var(--muted); margin: 0 0 10pt; }
+    .sheet h2 {
+      font-size: 11pt; text-transform: uppercase; letter-spacing: .8pt; margin: 12pt 0 5pt;
+      padding-bottom: 2pt; border-bottom: 1px solid var(--rule);
+    }
+    .sheet h3 { font-size: 10.5pt; margin: 8pt 0 1pt; }
+    .sheet h3 + p { color: var(--muted); margin: 0 0 3pt; }
+    .sheet p { margin: 0 0 5pt; }
+    .sheet ul { margin: 2pt 0 6pt; padding-left: 15pt; }
+    .sheet li { margin: 0 0 2pt; }
+    .sheet a { color: inherit; }
+    .sheet hr { border: none; border-top: 1px solid var(--rule); margin: 8pt 0; }
+    .error { max-width: 8.5in; margin: 40px auto; padding: 16px; background: #fff; border-radius: 8px; }
+
+    @page { size: letter; margin: 0.5in 0.6in; }
+    @media print {
+      body { background: #fff; }
+      .toolbar { display: none; }
+      .sheet { box-shadow: none; margin: 0; padding: 0; max-width: none; min-height: 0; }
+      h2, h3 { break-after: avoid; }
+      li { break-inside: avoid; }
+    }
+    @media (max-width: 700px) {
+      .sheet { margin: 0; padding: 20px 16px; min-height: 0; box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="title" id="doc-title">Loading…</span>
+    <button id="save" hidden>Save edits</button>
+    <button id="print" class="primary">Save as PDF</button>
+    <span class="hint">Click anywhere on the page to edit before saving. In the print dialog, choose “Save as PDF” and turn off headers and footers.</span>
+  </div>
+  <article id="sheet" class="sheet" contenteditable="true" spellcheck="true"></article>
+  <script src="/static/markdown.js"></script>
+  <script>
+    "use strict";
+    const id = location.pathname.split("/").filter(Boolean).pop();
+    const sheet = document.getElementById("sheet");
+    const saveBtn = document.getElementById("save");
+    let doc;
+
+    // Turn the edited page back into Markdown so edits are kept in the tracker.
+    function toMarkdown(root) {
+      const text = (el) => el.innerText.replace(/\s+/g, " ").trim();
+      const lines = [];
+      for (const el of root.children) {
+        const tag = el.tagName;
+        if (/^H[1-6]$/.test(tag)) lines.push("#".repeat(+tag[1]) + " " + text(el), "");
+        else if (tag === "UL" || tag === "OL") {
+          [...el.children].forEach((li, i) => lines.push((tag === "UL" ? "- " : `${i + 1}. `) + text(li)));
+          lines.push("");
+        } else if (tag === "HR") lines.push("---", "");
+        else if (text(el)) lines.push(el.innerText.split("\n").map((l) => l.trim()).filter(Boolean).join("\n"), "");
+      }
+      return lines.join("\n").trim() + "\n";
+    }
+
+    fetch(`/api/generated/${id}`).then(async (res) => {
+      if (res.status === 401) return (location.href = "/");
+      doc = await res.json();
+      if (!res.ok) throw new Error(doc.error || res.statusText);
+      document.title = doc.title;  // Chrome uses this as the PDF file name
+      document.getElementById("doc-title").textContent = doc.title;
+      sheet.innerHTML = renderMarkdown(doc.content);
+    }).catch((e) => {
+      sheet.outerHTML = `<div class="error">Couldn't load this resume: ${escapeHtml(e.message)}</div>`;
+    });
+
+    sheet.addEventListener("input", () => (saveBtn.hidden = false));
+    saveBtn.addEventListener("click", async () => {
+      saveBtn.disabled = true;
+      const res = await fetch(`/api/generated/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: toMarkdown(sheet) }),
+      });
+      saveBtn.disabled = false;
+      saveBtn.textContent = res.ok ? "Saved ✓" : "Save failed";
+      setTimeout(() => { saveBtn.textContent = "Save edits"; saveBtn.hidden = res.ok; }, 1500);
+    });
+    document.getElementById("print").addEventListener("click", () => window.print());
+  </script>
+</body>
+</html>

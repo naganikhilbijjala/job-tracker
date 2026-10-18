@@ -48,6 +48,20 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS events_job ON events(job_id)",
     "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS resume_files (resume_id INTEGER PRIMARY KEY, data BLOB NOT NULL)",
+    """CREATE TABLE IF NOT EXISTS chat_messages (
+         id         INTEGER PRIMARY KEY,
+         job_id     INTEGER NOT NULL,
+         role       TEXT NOT NULL,
+         content    TEXT NOT NULL,
+         created_at TEXT NOT NULL)""",
+    "CREATE INDEX IF NOT EXISTS chat_job ON chat_messages(job_id)",
+    """CREATE TABLE IF NOT EXISTS generated_resumes (
+         id         INTEGER PRIMARY KEY,
+         job_id     INTEGER,
+         title      TEXT NOT NULL,
+         content    TEXT NOT NULL,
+         source     TEXT NOT NULL DEFAULT 'app',
+         created_at TEXT NOT NULL)""",
 ]
 
 

@@ -30,8 +30,10 @@ from pathlib import Path
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
+import ai
 import database
 import gdrive
+import mcp
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "public"
@@ -811,6 +813,8 @@ def jobs_update(req, job_id):
 def jobs_delete(req, job_id):
     db, _ = backend()
     db.run_many([("DELETE FROM events WHERE job_id = ?", (job_id,)),
+                 ("DELETE FROM chat_messages WHERE job_id = ?", (job_id,)),
+                 ("DELETE FROM generated_resumes WHERE job_id = ?", (job_id,)),
                  ("DELETE FROM jobs WHERE id = ?", (job_id,))])
     return json_response({"ok": True})
 
@@ -949,6 +953,330 @@ def drive_sync(req):
 def drive_disconnect(req):
     gdrive.disconnect(backend()[0])
     return json_response({"ok": True})
+
+
+# ---------------------------------------------------------------- routes: profile & AI assistant
+
+def ai_config(db):
+    raw = db.get_setting("ai_config")
+    return json.loads(raw) if raw else {}
+
+
+def public_ai_config(config):
+    key = config.get("api_key") or ""
+    return {"provider": config.get("provider", "anthropic"), "model": config.get("model", ""),
+            "base_url": config.get("base_url", ""), "has_key": bool(key),
+            "key_hint": f"…{key[-4:]}" if len(key) > 8 else ""}
+
+
+@route("GET", r"/api/profile")
+def profile_get(req):
+    db, _ = backend()
+    return json_response({"profile": db.get_setting("profile") or "",
+                          "instructions": db.get_setting("ai_instructions") or ""})
+
+
+@route("PUT", r"/api/profile")
+def profile_put(req):
+    db, _ = backend()
+    data = req.json()
+    if "profile" in data:
+        db.set_setting("profile", str(data["profile"]))
+    if "instructions" in data:
+        db.set_setting("ai_instructions", str(data["instructions"]))
+    return json_response({"ok": True})
+
+
+@route("GET", r"/api/ai")
+def ai_get(req):
+    db, _ = backend()
+    providers = {k: {"label": v["label"], "base_url": v["base_url"], "model": v["model"]}
+                 for k, v in ai.PROVIDERS.items()}
+    return json_response({"config": public_ai_config(ai_config(db)), "providers": providers})
+
+
+@route("PUT", r"/api/ai")
+def ai_put(req):
+    db, _ = backend()
+    data = req.json()
+    provider = str(data.get("provider", "anthropic"))
+    if provider not in ai.PROVIDERS:
+        raise ApiError(400, f"Unknown provider '{provider}'")
+    old = ai_config(db)
+    config = {
+        "provider": provider,
+        "model": str(data.get("model", "")).strip() or ai.PROVIDERS[provider]["model"],
+        "base_url": str(data.get("base_url", "")).strip(),
+        # A blank key means "keep the saved one" (the browser never gets the key back).
+        "api_key": str(data.get("api_key", "")).strip() or old.get("api_key", ""),
+    }
+    db.set_setting("ai_config", json.dumps(config))
+    return json_response({"config": public_ai_config(config)})
+
+
+@route("POST", r"/api/ai/test")
+def ai_test(req):
+    db, _ = backend()
+    try:
+        reply = ai.complete(ai_config(db), "You are a connection test.",
+                            [{"role": "user", "content": "Reply with just the word OK."}], max_tokens=1024)
+    except ai.AIError as e:
+        raise ApiError(400, str(e)) from None
+    return json_response({"reply": reply[:200]})
+
+
+def assistant_prompt(db, job):
+    resume = db.query("SELECT label FROM resumes WHERE id = ?", (job["resume_id"],)) if job["resume_id"] else []
+    return ai.system_prompt(db.get_setting("profile") or "", db.get_setting("ai_instructions") or "",
+                            job, resume[0]["label"] if resume else "")
+
+
+@route("GET", r"/api/jobs/(\d+)/chat")
+def chat_history(req, job_id):
+    db, _ = backend()
+    return json_response(db.query("SELECT id, role, content, created_at FROM chat_messages "
+                                  "WHERE job_id = ? ORDER BY id", (job_id,)))
+
+
+@route("POST", r"/api/jobs/(\d+)/chat")
+def chat_send(req, job_id):
+    db, _ = backend()
+    job = find_job(db, job_id)
+    text = str(req.json().get("message", "")).strip()
+    if not text:
+        raise ApiError(400, "Type a message first")
+    history = db.query("SELECT role, content FROM chat_messages WHERE job_id = ? ORDER BY id", (job_id,))[-20:]
+    while history and history[0]["role"] != "user":  # conversations must open with the user
+        history.pop(0)
+    try:
+        reply = ai.complete(ai_config(db), assistant_prompt(db, job), [*history, {"role": "user", "content": text}])
+    except ai.AIError as e:
+        raise ApiError(400, str(e)) from None
+    at = now()
+    db.run_many([
+        ("INSERT INTO chat_messages (job_id, role, content, created_at) VALUES (?, 'user', ?, ?)", (job_id, text, at)),
+        ("INSERT INTO chat_messages (job_id, role, content, created_at) VALUES (?, 'assistant', ?, ?)", (job_id, reply, now())),
+    ])
+    return json_response({"user": {"role": "user", "content": text, "created_at": at},
+                          "assistant": {"role": "assistant", "content": reply, "created_at": now()}})
+
+
+@route("DELETE", r"/api/jobs/(\d+)/chat")
+def chat_clear(req, job_id):
+    db, _ = backend()
+    db.execute("DELETE FROM chat_messages WHERE job_id = ?", (job_id,))
+    return json_response({"ok": True})
+
+
+def save_generated(db, job_id, content, title="", source="app"):
+    job = find_job(db, job_id) if job_id else None
+    content = str(content).strip()
+    if not content:
+        raise ApiError(400, "The resume is empty")
+    if not title:
+        name = re.match(r"#\s+(.+)", content)
+        parts = [name.group(1).strip() if name else "Resume", job["company"] if job else "", today()]
+        title = " - ".join(p for p in parts if p)
+    return db.execute("INSERT INTO generated_resumes (job_id, title, content, source, created_at) "
+                      "VALUES (?, ?, ?, ?, ?)", (job_id, title, content, source, now()))
+
+
+@route("GET", r"/api/generated")
+def generated_list(req):
+    db, _ = backend()
+    job_id = req.query.get("job_id")
+    sql = ("SELECT g.id, g.job_id, g.title, g.source, g.created_at, j.company, j.title AS job_title "
+           "FROM generated_resumes g LEFT JOIN jobs j ON j.id = g.job_id")
+    rows = db.query(sql + " WHERE g.job_id = ? ORDER BY g.id DESC", (job_id,)) if job_id \
+        else db.query(sql + " ORDER BY g.id DESC")
+    return json_response(rows)
+
+
+@route("POST", r"/api/jobs/(\d+)/generated")
+def generated_create(req, job_id):
+    db, _ = backend()
+    data = req.json()
+    gid = save_generated(db, int(job_id), data.get("content", ""), str(data.get("title", "")).strip())
+    return json_response({"id": gid, "url": f"/resume/{gid}"}, 201)
+
+
+@route("GET", r"/api/generated/(\d+)")
+def generated_get(req, gid):
+    db, _ = backend()
+    rows = db.query("SELECT * FROM generated_resumes WHERE id = ?", (gid,))
+    if not rows:
+        raise ApiError(404, "Resume not found")
+    return json_response(rows[0])
+
+
+@route("PUT", r"/api/generated/(\d+)")
+def generated_update(req, gid):
+    db, _ = backend()
+    data = req.json()
+    db.execute("UPDATE generated_resumes SET content = ? WHERE id = ?", (str(data.get("content", "")), gid))
+    return json_response({"ok": True})
+
+
+@route("DELETE", r"/api/generated/(\d+)")
+def generated_delete(req, gid):
+    db, _ = backend()
+    db.execute("DELETE FROM generated_resumes WHERE id = ?", (gid,))
+    return json_response({"ok": True})
+
+
+@route("GET", r"/resume/(\d+)")
+def generated_page(req, gid):
+    return serve_public("/print.html")
+
+
+# ---------------------------------------------------------------- MCP (for Claude)
+
+def mcp_token(db, rotate=False):
+    token = None if rotate else db.get_setting("mcp_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        db.set_setting("mcp_token", token)
+    return token
+
+
+@route("GET", r"/api/mcp")
+def mcp_info(req):
+    db, _ = backend()
+    return json_response({"url": f"{req.origin}/mcp", "token": mcp_token(db)})
+
+
+@route("POST", r"/api/mcp/rotate")
+def mcp_rotate(req):
+    db, _ = backend()
+    return json_response({"url": f"{req.origin}/mcp", "token": mcp_token(db, rotate=True)})
+
+
+def mcp_tools(db, origin):
+    def get_profile():
+        return {"profile": db.get_setting("profile") or "(empty — ask the user to fill in the Profile tab)",
+                "instructions": db.get_setting("ai_instructions") or ""}
+
+    def list_jobs(status=None, query=None, limit=50):
+        rows = db.query(JOB_LIST_SQL + " ORDER BY j.updated_at DESC")
+        if status:
+            rows = [r for r in rows if r["status"] == status]
+        if query:
+            words = query.lower().split()
+            rows = [r for r in rows if all(w in f"{r['company']} {r['title']} {r['location']} {r['notes']}".lower()
+                                           for w in words)]
+        keys = ("id", "company", "title", "status", "location", "date_applied", "resume_label", "url")
+        return [{k: r[k] for k in keys} for r in rows[:max(1, min(int(limit), 200))]]
+
+    def get_job(job_id):
+        rows = db.query("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        if not rows:
+            raise mcp.ToolError(f"No job with id {job_id}")
+        job = rows[0]
+        resume = db.query("SELECT label FROM resumes WHERE id = ?", (job["resume_id"],)) if job["resume_id"] else []
+        job["resume_sent"] = resume[0]["label"] if resume else None
+        job["tailored_resumes"] = db.query("SELECT id, title, created_at FROM generated_resumes WHERE job_id = ?",
+                                           (job_id,))
+        job["history"] = db.query("SELECT at, kind, detail FROM events WHERE job_id = ? ORDER BY id", (job_id,))
+        return job
+
+    def list_resume_files():
+        return [{k: r[k] for k in ("id", "label", "filename", "uploaded_at", "job_count")}
+                for r in list_resumes(*backend())]
+
+    def list_tailored_resumes(job_id=None):
+        sql = "SELECT id, job_id, title, source, created_at FROM generated_resumes"
+        return db.query(sql + " WHERE job_id = ? ORDER BY id DESC", (job_id,)) if job_id \
+            else db.query(sql + " ORDER BY id DESC LIMIT 100")
+
+    def get_tailored_resume(resume_id):
+        rows = db.query("SELECT * FROM generated_resumes WHERE id = ?", (resume_id,))
+        if not rows:
+            raise mcp.ToolError(f"No tailored resume with id {resume_id}")
+        return rows[0]
+
+    def save_tailored_resume(job_id, content, title=""):
+        try:
+            gid = save_generated(db, int(job_id), content, title, source="claude")
+        except ApiError as e:
+            raise mcp.ToolError(e.message) from None
+        return {"id": gid, "open_to_print_as_pdf": f"{origin}/resume/{gid}"}
+
+    def change_job(job_id, status=None, note=None):
+        rows = db.query("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        if not rows:
+            raise mcp.ToolError(f"No job with id {job_id}")
+        fields = {}
+        if status:
+            if status not in STATUSES:
+                raise mcp.ToolError(f"status must be one of {', '.join(STATUSES)}")
+            fields["status"] = status
+        if note:
+            fields["notes"] = (rows[0]["notes"] + "\n\n" if rows[0]["notes"] else "") + note
+        update_job(db, int(job_id), fields)
+        return job_summary(db, job_id)
+
+    int_id = {"type": "integer", "description": "Job id from list_jobs"}
+    return [
+        mcp.Tool("get_profile", "The candidate's master profile (full experience, skills, education) and their "
+                 "standing instructions for tailoring. Read this before writing any resume or answer.",
+                 {}, [], get_profile),
+        mcp.Tool("list_jobs", "List tracked job applications, newest activity first.",
+                 {"status": {"type": "string", "enum": STATUSES}, "query": {"type": "string",
+                  "description": "Words to match in company, title, location or notes"},
+                  "limit": {"type": "integer", "minimum": 1, "maximum": 200}}, [], list_jobs),
+        mcp.Tool("get_job", "Full details for one job: the saved job description, notes, which resume was sent, "
+                 "status history, and tailored resumes already made for it.", {"job_id": int_id}, ["job_id"], get_job),
+        mcp.Tool("list_resume_files", "Resume files the candidate has uploaded (names only; they are PDFs).",
+                 {}, [], list_resume_files),
+        mcp.Tool("list_tailored_resumes", "Tailored resumes saved in the tracker (Markdown), optionally for one job.",
+                 {"job_id": int_id}, [], list_tailored_resumes),
+        mcp.Tool("get_tailored_resume", "Read a saved tailored resume's full Markdown.",
+                 {"resume_id": {"type": "integer"}}, ["resume_id"], get_tailored_resume),
+        mcp.Tool("save_tailored_resume", "Save a tailored resume for a job so the candidate can open it in the "
+                 "tracker and print it to PDF. content is Markdown: '# Full Name', a contact line, then '## ' "
+                 "sections with '- ' bullets; single column, no tables.",
+                 {"job_id": int_id, "content": {"type": "string"}, "title": {"type": "string"}},
+                 ["job_id", "content"], save_tailored_resume),
+        mcp.Tool("update_job", "Change a job's status and/or append a note.",
+                 {"job_id": int_id, "status": {"type": "string", "enum": STATUSES}, "note": {"type": "string"}},
+                 ["job_id"], change_job),
+    ]
+
+
+MCP_INSTRUCTIONS = ("Job Tracker holds the user's job applications, saved job descriptions, their master profile, "
+                    "and tailored resumes. To tailor a resume: call get_profile and get_job, write the resume "
+                    "using only facts from the profile, then save it with save_tailored_resume and give the user "
+                    "the returned link (they print it to PDF from there).")
+
+
+@route("POST", r"/mcp", public=True)
+def mcp_endpoint(req):
+    db, _ = backend()
+    auth = req.header("Authorization")
+    token = auth[7:] if auth.startswith("Bearer ") else req.query.get("key", "")
+    expected = db.get_setting("mcp_token")
+    if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
+        time.sleep(1)
+        raise ApiError(401, "Invalid MCP token — copy it from the Profile tab")
+    try:
+        payload = json.loads(req.body() or b"null")
+    except ValueError:
+        return json_response({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
+    tools = mcp_tools(db, req.origin)
+    info = {"name": "job-tracker", "version": "1.0.0"}
+    if isinstance(payload, list):
+        replies = [r for r in (mcp.handle(m, tools, info, MCP_INSTRUCTIONS) for m in payload) if r]
+    else:
+        replies = mcp.handle(payload, tools, info, MCP_INSTRUCTIONS)
+    if not replies:
+        return response(b"", "text/plain", 202)
+    return json_response(replies)
+
+
+@route("GET", r"/mcp", public=True)
+def mcp_get(req):
+    # This server doesn't open server-to-client event streams.
+    return response(b"", "text/plain", 405, [("Allow", "POST")])
 
 
 # ---------------------------------------------------------------- local server

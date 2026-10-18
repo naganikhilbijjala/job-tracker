@@ -153,6 +153,7 @@ function render() {
   renderStats();
   if (state.view === "board") renderBoard();
   else if (state.view === "table") renderTable();
+  else if (state.view === "profile") loadProfile();
   else renderResumes();
 }
 
@@ -329,6 +330,9 @@ async function openDrawer(id = null, prefill = {}) {
   $("#timeline").innerHTML = (job.events || []).map((e) =>
     `<div>${fmtDate(e.at)} — ${esc(e.kind === "created" ? `Added as ${STATUS_LABELS[e.detail] || e.detail}`
       : e.kind === "resume" ? `Resume set to “${e.detail}”` : e.detail.replace(/\w+/g, (s) => STATUS_LABELS[s] || s))}</div>`).join("");
+  $("#drawer-tabs [data-pane=assistant]").disabled = !id;
+  $("#drawer-tabs [data-pane=assistant]").title = id ? "" : "Save the job first to use the assistant";
+  showPane("details");
   $("#scrim").hidden = false;
   $("#drawer").classList.add("open");
   $("#drawer").setAttribute("aria-hidden", "false");
@@ -571,11 +575,260 @@ $("#view-resumes").addEventListener("click", async (e) => {
   }
 });
 
+// ------------------------------------------------------------ profile & AI settings
+
+let profileLoaded = false;
+let aiProviders = {};
+
+async function loadProfile() {
+  if (profileLoaded) return;
+  try {
+    const [profile, aiInfo, mcpInfo] = await Promise.all([api("/api/profile"), api("/api/ai"), api("/api/mcp")]);
+    $("#profile-text").value = profile.profile;
+    $("#instructions-text").value = profile.instructions;
+    aiProviders = aiInfo.providers;
+    renderAiPanel(aiInfo.config);
+    renderMcpPanel(mcpInfo);
+    profileLoaded = true;
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function renderAiPanel(config) {
+  const options = Object.entries(aiProviders)
+    .map(([k, p]) => `<option value="${k}" ${k === config.provider ? "selected" : ""}>${esc(p.label)}</option>`).join("");
+  $("#ai-panel").innerHTML = `
+    <h3>AI provider</h3>
+    <p class="muted small">Used by the ✨ Assistant in each job. You pay the provider directly; the key is stored in your tracker's database and never sent back to the browser.</p>
+    <form id="ai-form">
+      <label class="field">Provider<select name="provider">${options}</select></label>
+      <label class="field">Model<input name="model" value="${esc(config.model)}" placeholder="Model ID from the provider's docs"></label>
+      <label class="field" id="base-url-field">Base URL<input name="base_url" value="${esc(config.base_url)}" placeholder=""></label>
+      <label class="field">API key<input name="api_key" type="password" autocomplete="off"
+        placeholder="${config.has_key ? `Saved (${esc(config.key_hint)}) — leave blank to keep` : "Paste your API key"}"></label>
+      <div class="row"><button type="submit" class="primary">Save</button><button type="button" id="ai-test">Test</button></div>
+    </form>`;
+  syncProviderFields(false);
+}
+
+function syncProviderFields(providerChanged) {
+  const f = $("#ai-form");
+  const p = aiProviders[f.provider.value] || {};
+  $("#base-url-field").hidden = f.provider.value !== "custom" && !f.base_url.value;
+  f.base_url.placeholder = p.base_url || "https://…/v1";
+  if (providerChanged) f.model.value = p.model || "";
+}
+
+async function saveAi() {
+  const data = Object.fromEntries(new FormData($("#ai-form")));
+  const { config } = await api("/api/ai", { method: "PUT", json: data });
+  renderAiPanel(config);
+}
+
+function renderMcpPanel({ url, token }) {
+  // Running locally we know the project folder; on Vercel the user fills it in.
+  const folder = state.meta.resume_dir ? state.meta.resume_dir.replace(/\/data\/resumes$/, "") : "/path/to/job-tracker";
+  const desktop = JSON.stringify({ mcpServers: { "job-tracker": {
+    command: "python3", args: [`${folder}/mcp_bridge.py`, url, token] } } }, null, 2);
+  $("#mcp-panel").innerHTML = `
+    <h3>Use with Claude (MCP)</h3>
+    <p class="muted small">Lets Claude read your jobs, saved descriptions, profile and tailored resumes, and save new resumes here. Anyone with this token can read and edit your tracker, so keep it private.</p>
+    <details><summary><b>Claude Code</b></summary>
+      <code class="copy">claude mcp add --transport http job-tracker ${esc(url)} --header "Authorization: Bearer ${esc(token)}"</code></details>
+    <details><summary><b>claude.ai</b> (Settings → Connectors → Add custom connector)</summary>
+      <code class="copy">${esc(url)}?key=${esc(token)}</code></details>
+    <details><summary><b>Claude Desktop</b> (Settings → Developer → Edit config)</summary>
+      ${state.meta.resume_dir ? "" : `<p class="muted small">Replace <code>/path/to/job-tracker</code> with where the job-tracker folder is on that computer.</p>`}
+      <code class="copy pre">${esc(desktop)}</code></details>
+    <div class="row"><button id="mcp-rotate">New token</button></div>`;
+}
+
+document.addEventListener("submit", async (e) => {
+  if (e.target.id !== "ai-form") return;
+  e.preventDefault();
+  try { await saveAi(); toast("AI settings saved"); } catch (err) { toast(err.message, true); }
+});
+document.addEventListener("change", (e) => {
+  if (e.target.name === "provider" && e.target.closest("#ai-form")) syncProviderFields(true);
+});
+$("#view-profile").addEventListener("click", async (e) => {
+  try {
+    if (e.target.id === "ai-test") {
+      e.target.disabled = true;
+      e.target.textContent = "Testing…";
+      await saveAi();
+      const { reply } = await api("/api/ai/test", { method: "POST" });
+      toast(`Connected ✓ — the model replied “${reply}”`);
+    } else if (e.target.id === "mcp-rotate") {
+      if (!confirm("Make a new token? Claude apps using the old one will stop working until you update them.")) return;
+      renderMcpPanel(await api("/api/mcp/rotate", { method: "POST" }));
+      toast("New token created");
+    } else if (e.target.id === "save-profile") {
+      await api("/api/profile", { method: "PUT", json: {
+        profile: $("#profile-text").value, instructions: $("#instructions-text").value } });
+      $("#profile-status").textContent = "Saved ✓";
+      setTimeout(() => ($("#profile-status").textContent = ""), 2000);
+    }
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    const t = $("#ai-test");
+    if (t) { t.disabled = false; t.textContent = "Test"; }
+  }
+});
+
+// ------------------------------------------------------------ assistant (per job)
+
+const QUICK_PROMPTS = {
+  tailor: "Write my resume tailored to this job, following my instructions. Put the complete resume in the ```resume block.",
+  skills: "List 10 skills I can add to this application's skills field. Base them on the job description, but only include skills my profile actually supports. Most relevant first, one per line, nothing else.",
+  why: "Draft a 3–4 sentence answer to “Why do you want to work here?” for this job, grounded in my real experience. Ready to paste.",
+  cover: "Write a short cover letter (under 250 words) for this job, based only on my real experience.",
+  match: "How well do I match this job? Give the top strengths and the real gaps, briefly, and how to address each gap honestly.",
+};
+
+function showPane(pane) {
+  $$("#drawer-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.pane === pane));
+  $("#job-form").hidden = pane !== "details";
+  $("#assistant").hidden = pane !== "assistant";
+  if (pane === "assistant") loadAssistant();
+}
+
+$("#drawer-tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (b && !b.disabled) showPane(b.dataset.pane);
+});
+
+function messageHTML(m, i) {
+  if (m.role === "user") return `<div class="msg user">${esc(m.content)}</div>`;
+  if (m.pending) return `<div class="msg assistant pending"><span class="dots"></span> Thinking… <span id="elapsed"></span></div>`;
+  if (m.error) return `<div class="msg assistant error">${esc(m.error)}</div>`;
+  // A ```resume block becomes a preview card with a "print to PDF" action.
+  const parts = m.content.split(/```resume[^\n]*\n([\s\S]*?)(?:```|$)/);
+  const html = parts.map((part, j) => j % 2
+    ? `<div class="resume-card"><div class="resume-preview">${renderMarkdown(part)}</div>
+         <div class="row"><button type="button" class="primary" data-save-resume="${i}" data-part="${j}">Open &amp; save as PDF</button>
+         <button type="button" data-copy="${i}" data-part="${j}">Copy</button></div></div>`
+    : renderMarkdown(part)).join("");
+  return `<div class="msg assistant">${html}
+    <div class="msg-actions"><button type="button" data-copy="${i}">Copy</button></div></div>`;
+}
+
+let chat = [];
+let chatJobId = null;
+
+function renderChat() {
+  $("#chat-log").innerHTML = chat.map(messageHTML).join("") ||
+    `<div class="empty">Ask anything about this job — or use a quick action below.
+     The assistant knows your profile and this job's description.</div>`;
+  const sc = $("#assistant-scroll");
+  sc.scrollTop = sc.scrollHeight;
+}
+
+async function loadAssistant() {
+  const id = state.editingId;
+  if (!id) return;
+  try {
+    const [aiInfo, history, tailored] = await Promise.all([
+      api("/api/ai"), api(`/api/jobs/${id}/chat`), api(`/api/generated?job_id=${id}`)]);
+    const c = aiInfo.config;
+    $("#ai-note").innerHTML = c.has_key
+      ? `Using ${esc(aiInfo.providers[c.provider]?.label || c.provider)} · ${esc(c.model)}${history.length ? ` · <a href="#" id="clear-chat">Clear chat</a>` : ""}`
+      : `Set up an AI provider on the <a href="#profile" id="goto-profile">Profile tab</a> to use the assistant.`;
+    $("#tailored-list").innerHTML = tailored.length
+      ? `<div class="tailored"><b>Tailored resumes</b>${tailored.map((t) =>
+          `<div class="row"><a href="/resume/${t.id}" target="_blank" rel="noopener">${esc(t.title)}</a>
+           <span class="muted small">${t.source === "claude" ? "from Claude · " : ""}${ago(t.created_at)}</span>
+           <button type="button" class="icon small danger" data-delete-tailored="${t.id}" title="Delete">✕</button></div>`).join("")}</div>`
+      : "";
+    if (chatJobId !== id || !chat.some((m) => m.pending)) { chat = history; chatJobId = id; }
+    renderChat();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function sendChat(text) {
+  const id = state.editingId;
+  if (!id || !text.trim() || chat.some((m) => m.pending)) return;
+  chat.push({ role: "user", content: text }, { role: "assistant", pending: true });
+  renderChat();
+  const started = Date.now();
+  const timer = setInterval(() => { const el = $("#elapsed"); if (el) el.textContent = `${Math.round((Date.now() - started) / 1000)}s`; }, 1000);
+  try {
+    const res = await api(`/api/jobs/${id}/chat`, { method: "POST", json: { message: text } });
+    if (chatJobId === id) chat.splice(-2, 2, res.user, res.assistant);
+  } catch (e) {
+    if (chatJobId === id) chat.splice(-1, 1, { role: "assistant", error: e.message });
+  } finally {
+    clearInterval(timer);
+    if (chatJobId === id && state.editingId === id) renderChat();
+  }
+}
+
+function resumePart(i, j) {
+  const parts = chat[i].content.split(/```resume[^\n]*\n([\s\S]*?)(?:```|$)/);
+  return j === undefined ? chat[i].content : parts[j];
+}
+
+$("#chat-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const box = e.target.message;
+  const text = box.value;
+  box.value = "";
+  sendChat(text);
+});
+$("#chat-form").message.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !matchMedia("(pointer: coarse)").matches) {
+    e.preventDefault();
+    $("#chat-form").requestSubmit();
+  }
+});
+$("#chips").addEventListener("click", (e) => {
+  const key = e.target.closest("button")?.dataset.prompt;
+  if (key) sendChat(QUICK_PROMPTS[key]);
+});
+$("#assistant").addEventListener("click", async (e) => {
+  const t = e.target;
+  try {
+    if (t.dataset.copy !== undefined) {
+      const part = t.dataset.part !== undefined ? Number(t.dataset.part) : undefined;
+      await navigator.clipboard.writeText(resumePart(Number(t.dataset.copy), part).trim());
+      toast("Copied");
+    } else if (t.dataset.saveResume !== undefined) {
+      const win = window.open("", "_blank");  // open now, while the click still counts (popup blockers)
+      const { url } = await api(`/api/jobs/${state.editingId}/generated`, {
+        method: "POST", json: { content: resumePart(Number(t.dataset.saveResume), Number(t.dataset.part)) } });
+      if (win) win.location = url; else location.href = url;
+      loadAssistant();
+    } else if (t.dataset.deleteTailored) {
+      if (!confirm("Delete this tailored resume?")) return;
+      await api(`/api/generated/${t.dataset.deleteTailored}`, { method: "DELETE" });
+      loadAssistant();
+    } else if (t.id === "clear-chat") {
+      e.preventDefault();
+      if (!confirm("Clear this job's chat history?")) return;
+      await api(`/api/jobs/${state.editingId}/chat`, { method: "DELETE" });
+      chat = [];
+      loadAssistant();
+    } else if (t.id === "goto-profile") {
+      e.preventDefault();
+      closeDrawer();
+      state.view = "profile";
+      history.replaceState(null, "", "#profile");
+      render();
+    }
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 // ------------------------------------------------------------ boot
 
 const params = new URLSearchParams(location.search);
 const hashView = location.hash.slice(1);
-if (["board", "table", "resumes"].includes(hashView)) state.view = hashView;
+if (["board", "table", "resumes", "profile"].includes(hashView)) state.view = hashView;
 
 // Opened from the phone's Share menu (installed app) — pull the link out of whatever was shared.
 function sharedJob() {
@@ -599,7 +852,8 @@ async function boot() {
     await openDrawer(null, shared);
     autofill();
   } else if (openId) {
-    openDrawer(openId);
+    await openDrawer(openId);
+    if (params.get("pane") === "assistant") showPane("assistant");
   }
 }
 
