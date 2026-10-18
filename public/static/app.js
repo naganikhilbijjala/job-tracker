@@ -96,50 +96,22 @@ async function showLogin() {
   $("#login").hidden = false;
   closeDrawer();
   try { state.meta = await api("/api/meta"); } catch {}
-  const { auth = {}, request } = state.meta;
-  $("#google-login").hidden = !auth.google || !!request;
+  const { auth = {} } = state.meta;
+  $("#google-login").hidden = !auth.google;
   // Single-user trackers just show the password box; with Google sign-in it's tucked away for the admin.
   const pw = $("#password-login");
-  pw.hidden = !auth.password || !!request;
+  pw.hidden = !auth.password;
   pw.open = !auth.google;
   $("summary", pw).hidden = !auth.google;
-  const box = $("#access-request");
-  box.hidden = !request;
-  if (request) {
-    const who = esc(request.name || request.email);
-    box.innerHTML = request.status === "pending"
-      ? `<p><b>Thanks, ${who}.</b> Your request to join is waiting for approval.</p>
-         <label class="field">Add a message for the admin (optional)
-           <textarea id="request-note" rows="3" maxlength="500" placeholder="e.g. Hi! It's Sam from the data science meetup.">${esc(request.note)}</textarea></label>
-         <div class="row"><button id="save-note">Send message</button><span id="note-status" class="muted small"></span></div>
-         <p class="muted small">Once you're approved, <a href="/login/google">sign in again</a> to get in.</p>
-         <p class="small"><a href="#" id="other-account">Use a different Google account</a></p>`
-      : `<p>Your request to join (${esc(request.email)}) wasn't approved.</p>
-         <p class="small"><a href="#" id="other-account">Use a different Google account</a></p>`;
-  }
   const err = new URLSearchParams(location.search).get("login_error");
   if (err) {
-    $("#login-error").textContent = `Sign-in failed: ${err}`;
+    $("#login-error").textContent = err;
     $("#login-error").hidden = false;
     history.replaceState(null, "", "/");
   }
   if (!pw.hidden && pw.open) $("#login-form").password.focus();
 }
 
-$("#access-request").addEventListener("click", async (e) => {
-  try {
-    if (e.target.id === "save-note") {
-      await api("/api/access/note", { method: "POST", json: { note: $("#request-note").value } });
-      $("#note-status").textContent = "Sent ✓";
-    } else if (e.target.id === "other-account") {
-      e.preventDefault();
-      await api("/api/logout", { method: "POST" });
-      showLogin();
-    }
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
 
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -931,57 +903,66 @@ $("#assistant").addEventListener("click", async (e) => {
 
 // ------------------------------------------------------------ users (admin, multi-user mode)
 
-function setPendingBadge(n) {
-  $("#pending-badge").textContent = n;
-  $("#pending-badge").hidden = !n;
+function setLimitBadge(n) {
+  $("#limit-badge").textContent = n;
+  $("#limit-badge").hidden = !n;
 }
 
 const fmtBytes = (n) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+const atLimit = (u) => u.limit !== null && u.status === "active" && u.jobs >= u.limit;
 
 async function loadUsers() {
-  let users;
+  let users, defaultLimit;
   try {
-    users = await api("/api/admin/users");
+    ({ users, default_limit: defaultLimit } = await api("/api/admin/users"));
   } catch (e) {
     return toast(e.message, true);
   }
-  const pending = users.filter((u) => u.status === "pending");
-  const others = users.filter((u) => u.status !== "pending");
-  setPendingBadge(pending.length);
+  const full = users.filter(atLimit);
+  setLimitBadge(full.length);
+  users.sort((a, b) => atLimit(b) - atLimit(a));
   const who = (u) => `<b>${esc(u.name || u.email)}</b>${u.name ? `<div class="muted small">${esc(u.email)}</div>` : ""}`;
   $("#users-main").innerHTML = `
-    <h3>Access requests</h3>
-    ${pending.length ? pending.map((u) => `<div class="panel user-card">
-        <div>${who(u)}<div class="muted small">asked ${ago(u.created_at)}</div>
-          ${u.note ? `<p class="note">“${esc(u.note)}”</p>` : ""}</div>
-        <div class="row"><button class="primary" data-user="${u.id}" data-status="active">Approve</button>
-          <button data-user="${u.id}" data-status="blocked">Decline</button></div>
-      </div>`).join("") : `<p class="muted">No requests waiting. People who sign in with Google appear here.</p>`}
     <h3>People</h3>
+    ${full.length ? `<p class="warn-note">${full.length === 1 ? "1 person has" : `${full.length} people have`} reached
+      their job limit and can't add more. Raise it with <b>Change limit</b>, or leave it.</p>` : ""}
     <div class="table-wrap"><table class="users-table">
       <thead><tr><th>Name</th><th>Access</th><th>Jobs</th><th>Files</th><th>Last sign-in</th><th></th></tr></thead>
-      <tbody>${others.map((u) => `<tr>
+      <tbody>${users.map((u) => `<tr class="${atLimit(u) ? "full" : ""}">
         <td>${who(u)}</td>
-        <td data-label="Access">${u.id === 1 ? "Admin (you)" : u.status === "active" ? (u.last_login ? "Active" : "Invited") : "Removed"}</td>
-        <td data-label="Jobs">${u.jobs}</td><td data-label="Files">${u.resume_bytes ? fmtBytes(u.resume_bytes) : "—"}</td>
+        <td data-label="Access">${u.id === 1 ? "Admin (you)" : u.status === "active" ? "Active" : "Turned off"}</td>
+        <td data-label="Jobs">${u.jobs}${u.limit === null ? "" : ` / ${u.limit}`}${atLimit(u) ? ' <span class="pill-full">at limit</span>' : ""}</td>
+        <td data-label="Files">${u.resume_bytes ? fmtBytes(u.resume_bytes) : "—"}</td>
         <td data-label="Last sign-in">${u.last_login ? ago(u.last_login) : "—"}</td>
-        <td class="actions">${u.id === 1 ? "" : u.status === "active"
-          ? `<button data-user="${u.id}" data-status="blocked">Remove access</button>`
-          : `<button data-user="${u.id}" data-status="active">Restore</button>
-             <button class="danger" data-delete-user="${u.id}" data-email="${esc(u.email)}">Delete data</button>`}</td>
+        <td class="actions">${u.id === 1 ? "" : `<button data-limit="${u.id}" data-current="${u.limit}">Change limit</button>
+          ${u.status === "active"
+            ? `<button data-user="${u.id}" data-status="blocked">Turn off</button>`
+            : `<button data-user="${u.id}" data-status="active">Turn on</button>
+               <button class="danger" data-delete-user="${u.id}" data-email="${esc(u.email)}">Delete data</button>`}`}</td>
       </tr>`).join("")}</tbody></table></div>`;
   const bytes = users.reduce((n, u) => n + u.resume_bytes, 0);
   $("#users-usage").innerHTML = `<h3>Usage</h3>
-    <p class="muted small">${users.filter((u) => u.status === "active").length} people with access ·
+    <p class="muted small">${users.length} ${users.length === 1 ? "person" : "people"} ·
       ${users.reduce((n, u) => n + u.jobs, 0)} jobs · ${fmtBytes(bytes)} of resume files.
-      Turso's free plan includes 5 GB.</p>`;
+      Turso's free plan includes 5 GB.</p>
+    <h3 style="margin-top:14px">How access works</h3>
+    <p class="muted small">Anyone can sign in with Google. Each person can save up to ${defaultLimit} jobs; they
+      don't see the number until they reach it. <b>Turn off</b> signs someone out everywhere, and their data
+      stays until you delete it.</p>`;
 }
 
 $("#view-users").addEventListener("click", async (e) => {
   const t = e.target.closest("button");
   if (!t) return;
   try {
-    if (t.dataset.status) {
+    if (t.dataset.limit) {
+      const answer = prompt("How many jobs can this person save? Leave empty for the default.", t.dataset.current);
+      if (answer === null) return;
+      const limit = answer.trim() === "" ? null : Number(answer);
+      if (limit !== null && !(Number.isInteger(limit) && limit >= 0)) return toast("Enter a whole number", true);
+      await api(`/api/admin/users/${t.dataset.limit}`, { method: "PUT", json: { job_limit: limit } });
+    } else if (t.dataset.status) {
+      if (t.dataset.status === "blocked" && !confirm("Turn off this person's access? They're signed out everywhere right away.")) return;
       await api(`/api/admin/users/${t.dataset.user}`, { method: "PUT", json: { status: t.dataset.status } });
     } else if (t.dataset.deleteUser) {
       if (!confirm(`Delete ${t.dataset.email} and all their jobs, resumes and chats? This can't be undone.`)) return;
@@ -989,18 +970,6 @@ $("#view-users").addEventListener("click", async (e) => {
     } else {
       return;
     }
-    loadUsers();
-  } catch (err) {
-    toast(err.message, true);
-  }
-});
-
-$("#invite-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  try {
-    await api("/api/admin/users", { method: "POST", json: { email: e.target.email.value } });
-    toast(`Invited ${e.target.email.value}. Send them the link to this page.`);
-    e.target.reset();
     loadUsers();
   } catch (err) {
     toast(err.message, true);
@@ -1027,7 +996,7 @@ async function boot() {
   $("#app").hidden = false;
   const admin = !!state.meta.user?.is_admin;
   $('.tabs [data-view="users"]').hidden = !admin;
-  setPendingBadge(state.meta.user?.pending || 0);
+  setLimitBadge(state.meta.user?.at_limit || 0);
   if (state.view === "users" && !admin) state.view = "board";
   await loadAll();
   if (params.get("drive") === "connected") toast("Google Drive connected");

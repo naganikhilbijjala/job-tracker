@@ -44,7 +44,7 @@ PORT = int(os.environ.get("JOB_TRACKER_PORT", 8765))
 LOCAL_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 ON_VERCEL = bool(os.environ.get("VERCEL"))
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
-# Multi-user mode: people sign in with Google and the admin decides who gets in.
+# Multi-user mode: anyone can sign in with Google; the admin can turn people off or change their limit.
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip().lower()
 MULTI_USER = bool(ADMIN_EMAIL) and gdrive.is_configured()
 ADMIN_ID = 1  # the admin is always user 1, who also owns everything from before multi-user
@@ -54,7 +54,6 @@ _SECRET_SOURCE = (os.environ.get("SESSION_SECRET") or APP_PASSWORD
 SECRET = (hashlib.sha256(b"job-tracker:" + _SECRET_SOURCE.encode()).digest()
           if _SECRET_SOURCE else secrets.token_bytes(32))
 SESSION_COOKIE = "jt_session"
-REQUEST_COOKIE = "jt_request"  # lets someone waiting for approval see and add to their request
 LOGIN_COOKIE = "jt_login"  # set while a Google sign-in is in progress
 SESSION_DAYS = 180
 
@@ -64,6 +63,8 @@ JOB_FIELDS = ["company", "title", "location", "url", "source", "salary", "status
 RESUME_EXTS = {".pdf", ".doc", ".docx", ".odt", ".rtf", ".txt", ".md"}
 MAX_RESUME_BYTES = 4 * 1024 * 1024  # Vercel caps request bodies at 4.5 MB
 FOLLOW_UP_DAYS = 7
+# How many jobs each person can save in multi-user mode, until the admin raises it for them.
+DEFAULT_JOB_LIMIT = int(os.environ.get("JOB_LIMIT", 50))
 # Query params that only track clicks; stripped so the same posting dedupes.
 TRACKING_PARAMS = re.compile(r"^(utm_.*|trk.*|ref|refid|src|source|gh_src|lever-source.*|"
                              r"trackingid|eBP|from|fbclid|gclid|mc_.*|_hs.*)$", re.I)
@@ -198,7 +199,19 @@ def status_side_effects(fields, old):
         fields["follow_up"] = (date.fromisoformat(applied) + timedelta(days=FOLLOW_UP_DAYS)).isoformat()
 
 
+def check_job_limit(db):
+    if not MULTI_USER or db.uid == ADMIN_ID:
+        return
+    rows = db.query("SELECT job_limit, (SELECT count(*) FROM jobs WHERE user_id = users.id) AS used "
+                    "FROM users WHERE id = ?", (db.uid,))
+    limit = rows[0]["job_limit"] if rows and rows[0]["job_limit"] is not None else DEFAULT_JOB_LIMIT
+    if rows and rows[0]["used"] >= limit:
+        raise ApiError(403, "You've reached the number of jobs you can save for now. "
+                            "Ask the tracker's admin to raise your limit.")
+
+
 def insert_job(db, fields):
+    check_job_limit(db)
     fields.setdefault("status", "saved")
     if fields.get("url") and not fields.get("source"):
         fields["source"] = urllib.parse.urlsplit(fields["url"]).netloc.removeprefix("www.")
@@ -801,11 +814,10 @@ def login(req):
 
 @route("POST", r"/api/logout", public=True)
 def logout(req):
-    return json_response({"ok": True}, headers=[("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0"),
-                                                ("Set-Cookie", f"{REQUEST_COOKIE}=; Path=/; Max-Age=0")])
+    return json_response({"ok": True}, headers=[("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0")])
 
 
-# ---------------------------------------------------------------- routes: Google sign-in & access
+# ---------------------------------------------------------------- routes: Google sign-in & users
 
 def ensure_admin(db, name=""):
     """Create the admin's row as user 1 before anyone else, so nobody else can ever become user 1."""
@@ -815,16 +827,6 @@ def ensure_admin(db, name=""):
         ("UPDATE users SET email = ?, status = 'active', name = CASE WHEN ? != '' THEN ? ELSE name END "
          "WHERE id = ?", (ADMIN_EMAIL, name, name, ADMIN_ID)),
     ])
-
-
-def access_request(req):
-    """The pending/declined request of someone who signed in but isn't let in yet."""
-    token = req.cookie(REQUEST_COOKIE)
-    if not MULTI_USER or not verify(token, "request"):
-        return None
-    uid = int(token.rpartition(".")[0].split(":")[2])
-    rows = store()[0].query("SELECT id, email, name, status, note FROM users WHERE id = ?", (uid,))
-    return rows[0] if rows and rows[0]["status"] != "active" else None
 
 
 @route("GET", r"/login/google", public=True)
@@ -855,30 +857,18 @@ def finish_google_login(req):
     if person["email"] == ADMIN_EMAIL:
         ensure_admin(db, person["name"])
         uid = ADMIN_ID
-    else:
+    else:  # open to everyone: a first sign-in creates the account
         rows = db.query("SELECT id, status FROM users WHERE email = ?", (person["email"],))
+        if rows and rows[0]["status"] != "active":
+            return redirect("/?login_error=" + urllib.parse.quote("Your access to this tracker has been turned off. "
+                                                                  "Contact its admin if that's a mistake."))
         uid = rows[0]["id"] if rows else db.execute(
-            "INSERT INTO users (email, name, status, created_at) VALUES (?, ?, 'pending', ?)",
+            "INSERT INTO users (email, name, status, created_at) VALUES (?, ?, 'active', ?)",
             (person["email"], person["name"], now()))
         if rows and person["name"]:
             db.execute("UPDATE users SET name = ? WHERE id = ? AND name = ''", (person["name"], uid))
-        if not rows or rows[0]["status"] != "active":
-            token = sign(f"request:{int(time.time()) + 30 * 86400}:{uid}")
-            return response(b"", "text/plain", 302, [("Location", "/"), cookie(req, REQUEST_COOKIE, token, 30 * 86400),
-                                                     ("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0")])
     db.execute("UPDATE users SET last_login = ? WHERE id = ?", (now(), uid))
-    return response(b"", "text/plain", 302, [("Location", "/"), session_cookie(req, uid),
-                                             ("Set-Cookie", f"{REQUEST_COOKIE}=; Path=/; Max-Age=0")])
-
-
-@route("POST", r"/api/access/note", public=True)
-def access_note(req):
-    request = access_request(req)
-    if not request or request["status"] != "pending":
-        raise ApiError(403, "No access request to update")
-    note = str(req.json().get("note", "")).strip()[:500]
-    store()[0].execute("UPDATE users SET note = ? WHERE id = ? AND status = 'pending'", (note, request["id"]))
-    return json_response({"ok": True})
+    return response(b"", "text/plain", 302, [("Location", "/"), session_cookie(req, uid)])
 
 
 @route("GET", r"/api/admin/users")
@@ -886,42 +876,41 @@ def admin_users(req):
     require_admin()
     db, _ = store()
     ensure_admin(db)
-    return json_response(db.query("""
-        SELECT u.id, u.email, u.name, u.status, u.note, u.created_at, u.last_login,
+    users = db.query("""
+        SELECT u.id, u.email, u.name, u.status, u.job_limit, u.created_at, u.last_login,
                (SELECT count(*) FROM jobs j WHERE j.user_id = u.id) AS jobs,
                (SELECT coalesce(sum(r.size), 0) FROM resumes r WHERE r.user_id = u.id) AS resume_bytes
-        FROM users u ORDER BY u.status = 'pending' DESC, u.created_at DESC"""))
-
-
-@route("POST", r"/api/admin/users")
-def admin_invite(req):
-    """Invite someone: they get straight in the first time they sign in with this Google account."""
-    require_admin()
-    email = str(req.json().get("email", "")).strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-        raise ApiError(400, "That doesn't look like an email address")
-    db, _ = store()
-    ensure_admin(db)
-    db.execute("INSERT INTO users (email, status, created_at) VALUES (?, 'active', ?) "
-               "ON CONFLICT(email) DO UPDATE SET status = 'active'", (email, now()))
-    return json_response({"ok": True}, 201)
+        FROM users u ORDER BY u.created_at DESC""")
+    for u in users:
+        u["limit"] = None if u["id"] == ADMIN_ID else u["job_limit"] if u["job_limit"] is not None else DEFAULT_JOB_LIMIT
+    return json_response({"users": users, "default_limit": DEFAULT_JOB_LIMIT})
 
 
 @route("PUT", r"/api/admin/users/(\d+)")
-def admin_set_status(req, uid):
+def admin_update_user(req, uid):
+    """Turn someone's access off or back on, and/or change how many jobs they can save."""
     require_admin()
-    status = req.json().get("status")
-    if status not in ("active", "blocked"):
-        raise ApiError(400, "status must be active or blocked")
+    data = req.json()
     if int(uid) == ADMIN_ID:
-        raise ApiError(400, "You can't change your own access")
-    store()[0].execute("UPDATE users SET status = ? WHERE id = ?", (status, uid))
+        raise ApiError(400, "You can't change your own access or limit")
+    statements = []
+    if "status" in data:
+        if data["status"] not in ("active", "blocked"):
+            raise ApiError(400, "status must be active or blocked")
+        statements.append(("UPDATE users SET status = ? WHERE id = ?", (data["status"], uid)))
+    if "job_limit" in data:
+        limit = data["job_limit"]  # null goes back to the default
+        if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 0):
+            raise ApiError(400, "job_limit must be a whole number, or null for the default")
+        statements.append(("UPDATE users SET job_limit = ? WHERE id = ?", (limit, uid)))
+    if statements:
+        store()[0].run_many(statements)
     return json_response({"ok": True})
 
 
 @route("DELETE", r"/api/admin/users/(\d+)")
 def admin_delete_user(req, uid):
-    """Delete someone and everything they stored. Signing in again starts a new request."""
+    """Delete someone and everything they stored. If they sign in again, they start from scratch."""
     require_admin()
     uid = int(uid)
     if uid == ADMIN_ID:
@@ -956,14 +945,17 @@ def meta(req):
     auth = {"required": bool(APP_PASSWORD) or ON_VERCEL or MULTI_USER, "ok": _request.uid is not None,
             "google": MULTI_USER, "password": bool(APP_PASSWORD)}
     if not auth["ok"]:
-        return json_response({"auth": auth, "statuses": STATUSES, "request": access_request(req)})
+        return json_response({"auth": auth, "statuses": STATUSES})
     db, files = backend()
     user = None
     if MULTI_USER:
         rows = db.query("SELECT email, name FROM users WHERE id = ?", (db.uid,))
         user = {**(rows[0] if rows else {"email": ADMIN_EMAIL, "name": ""}), "is_admin": is_admin()}
-        if is_admin():
-            user["pending"] = db.query("SELECT count(*) AS n FROM users WHERE status = 'pending'")[0]["n"]
+        if is_admin():  # people who've hit their job limit, for the badge on the Users tab
+            user["at_limit"] = db.query(
+                "SELECT count(*) AS n FROM users u WHERE u.id != ? AND u.status = 'active' AND "
+                "(SELECT count(*) FROM jobs j WHERE j.user_id = u.id) >= coalesce(u.job_limit, ?)",
+                (ADMIN_ID, DEFAULT_JOB_LIMIT))[0]["n"]
     return json_response({
         "auth": auth,
         "user": user,

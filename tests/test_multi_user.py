@@ -1,4 +1,4 @@
-"""Multi-user mode: sign-in, access requests, and that nobody can reach anyone else's data.
+"""Multi-user mode: open sign-up, job limits, turning access off, and that nobody can reach anyone else's data.
 
 Run with:  python3 -m unittest discover tests
 Google is faked; everything else (routes, database, sessions) is the real app.
@@ -82,12 +82,8 @@ class MultiUserTest(unittest.TestCase):
         cls.admin = Client()
         cls.admin.sign_in(ADMIN, "Admin")
         cls.friend = Client()
-        cls.friend.sign_in("friend@example.com", "Friend")  # asks for access
-        users = cls.admin.call("GET", "/api/admin/users")["json"]
-        friend_id = next(u["id"] for u in users if u["email"] == "friend@example.com")
-        cls.admin.call("PUT", f"/api/admin/users/{friend_id}", {"status": "active"})
-        cls.friend.sign_in("friend@example.com")
-        cls.friend_id = friend_id
+        cls.friend.sign_in("friend@example.com", "Friend")
+        cls.friend_id = cls.user_id("friend@example.com")
 
         # The admin's data: a job with a resume attached, a chat, a tailored resume and an AI review.
         a = cls.admin
@@ -106,6 +102,10 @@ class MultiUserTest(unittest.TestCase):
                                               "weaknesses": []})))])
         a.call("PUT", "/api/profile", {"profile": "ADMIN PROFILE SECRET"})
         cls.a_mcp = a.call("GET", "/api/mcp")["json"]["token"]
+
+    @classmethod
+    def user_id(cls, email):
+        return next(u["id"] for u in cls.admin.call("GET", "/api/admin/users")["json"]["users"] if u["email"] == email)
 
     @classmethod
     def tearDownClass(cls):
@@ -159,8 +159,9 @@ class MultiUserTest(unittest.TestCase):
         self.assertNotEqual(captured["job"]["id"], job)
 
         # Admin pages are off limits.
-        for method, path, body in [("GET", "/api/admin/users", None), ("POST", "/api/admin/users", {"email": "x@y.z"}),
+        for method, path, body in [("GET", "/api/admin/users", None),
                                    ("PUT", "/api/admin/users/1", {"status": "blocked"}),
+                                   ("PUT", f"/api/admin/users/{self.friend_id}", {"job_limit": 1000}),
                                    ("DELETE", f"/api/admin/users/{self.friend_id}", None)]:
             with self.subTest(route=f"{method} {path}"):
                 self.assertEqual(f.call(method, path, body)["status"], 403)
@@ -188,39 +189,48 @@ class MultiUserTest(unittest.TestCase):
                                                                       "method": "tools/list"})["status"], 401)
         self.assert_admin_data_intact()
 
-    def test_access_requests(self):
-        stranger = Client()
-        stranger.sign_in("stranger@example.com", "Stranger")
-        self.assertNotIn(server.SESSION_COOKIE, stranger.cookies)
-        meta = stranger.call("GET", "/api/meta")["json"]
-        self.assertFalse(meta["auth"]["ok"])
-        self.assertEqual(meta["request"]["status"], "pending")
-        self.assertEqual(stranger.call("GET", "/api/jobs")["status"], 401)
-        self.assertEqual(stranger.call("POST", "/api/access/note", {"note": "Hi, it's Sam"})["status"], 200)
+    def test_anyone_can_sign_up(self):
+        newcomer = Client()
+        newcomer.sign_in("newcomer@example.com", "Newcomer")
+        self.assertTrue(newcomer.call("GET", "/api/meta")["json"]["auth"]["ok"])
+        self.assertEqual(newcomer.call("GET", "/api/jobs")["json"], [])
+        self.assertFalse(newcomer.call("GET", "/api/meta")["json"]["user"]["is_admin"])
 
+    def test_job_limit(self):
+        c = Client()
+        c.sign_in("busy@example.com")
+        uid = self.user_id("busy@example.com")
+        self.admin.call("PUT", f"/api/admin/users/{uid}", {"job_limit": 2})
+        ids = [c.call("POST", "/api/jobs", {"company": f"Co{i}"})["json"]["id"] for i in range(2)]
+        res = c.call("POST", "/api/jobs", {"company": "One too many"})
+        self.assertEqual(res["status"], 403)
+        self.assertIn("limit", res["json"]["error"])
+        self.assertEqual(c.call("POST", "/api/jobs/capture", {"url": "https://x.example.com/9"})["status"], 403)
+        # Existing jobs still work, and the admin sees who's at the limit.
+        self.assertEqual(c.call("PUT", f"/api/jobs/{ids[0]}", {"status": "applied"})["status"], 200)
         users = self.admin.call("GET", "/api/admin/users")["json"]
-        req = next(u for u in users if u["email"] == "stranger@example.com")
-        self.assertEqual((req["status"], req["note"]), ("pending", "Hi, it's Sam"))
-        self.assertEqual(self.admin.call("GET", "/api/meta")["json"]["user"]["pending"], 1)
-
-        # Declined: signing in again still doesn't get them in.
-        self.admin.call("PUT", f"/api/admin/users/{req['id']}", {"status": "blocked"})
-        stranger.sign_in("stranger@example.com")
-        self.assertEqual(stranger.call("GET", "/api/meta")["json"]["request"]["status"], "blocked")
-        self.assertEqual(stranger.call("POST", "/api/access/note", {"note": "pls"})["status"], 403)
-
-        # Invited people get straight in on their first sign-in.
-        self.admin.call("POST", "/api/admin/users", {"email": "Invited@Example.com"})
-        invited = Client()
-        invited.sign_in("invited@example.com", "Invited")
-        self.assertTrue(invited.call("GET", "/api/meta")["json"]["auth"]["ok"])
+        self.assertEqual(users["default_limit"], server.DEFAULT_JOB_LIMIT)
+        busy = next(u for u in users["users"] if u["id"] == uid)
+        self.assertEqual((busy["jobs"], busy["limit"]), (2, 2))
+        self.assertGreaterEqual(self.admin.call("GET", "/api/meta")["json"]["user"]["at_limit"], 1)
+        # Deleting a job frees a slot; raising the limit allows more; null goes back to the default.
+        c.call("DELETE", f"/api/jobs/{ids[1]}")
+        self.assertEqual(c.call("POST", "/api/jobs", {"company": "Again"})["status"], 201)
+        self.admin.call("PUT", f"/api/admin/users/{uid}", {"job_limit": 5})
+        self.assertEqual(c.call("POST", "/api/jobs", {"company": "More"})["status"], 201)
+        self.admin.call("PUT", f"/api/admin/users/{uid}", {"job_limit": None})
+        busy = next(u for u in self.admin.call("GET", "/api/admin/users")["json"]["users"] if u["id"] == uid)
+        self.assertEqual(busy["limit"], server.DEFAULT_JOB_LIMIT)
+        self.assertEqual(self.admin.call("PUT", f"/api/admin/users/{uid}", {"job_limit": -1})["status"], 400)
+        self.assertEqual(self.admin.call("PUT", f"/api/admin/users/{uid}", {"job_limit": "lots"})["status"], 400)
+        # The admin has no limit.
+        self.assertIsNone(next(u for u in self.admin.call("GET", "/api/admin/users")["json"]["users"]
+                               if u["id"] == 1)["limit"])
 
     def test_removing_access_logs_out_everywhere(self):
         c = Client()
         c.sign_in("temp@example.com")
-        uid = next(u["id"] for u in self.admin.call("GET", "/api/admin/users")["json"] if u["email"] == "temp@example.com")
-        self.admin.call("PUT", f"/api/admin/users/{uid}", {"status": "active"})
-        c.sign_in("temp@example.com")
+        uid = self.user_id("temp@example.com")
         code = c.call("POST", "/api/extension-code")["json"]["code"]
         extension = Client(bearer=Client().call("POST", "/api/login", {"password": code})["json"]["token"])
         c.call("POST", "/api/jobs", {"company": "TempCo"})
@@ -229,6 +239,9 @@ class MultiUserTest(unittest.TestCase):
         self.admin.call("PUT", f"/api/admin/users/{uid}", {"status": "blocked"})
         self.assertEqual(c.call("GET", "/api/jobs")["status"], 401)
         self.assertEqual(extension.call("GET", "/api/jobs")["status"], 401)
+        again = c.sign_in("temp@example.com")  # signing in again doesn't get them back in
+        self.assertIn("turned%20off", again["headers"]["Location"])
+        self.assertEqual(c.call("GET", "/api/jobs")["status"], 401)
 
         # Deleting removes their data; the admin can't remove or delete themselves.
         self.assertEqual(self.admin.call("DELETE", f"/api/admin/users/{uid}")["status"], 200)

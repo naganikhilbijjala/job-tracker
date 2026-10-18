@@ -18,10 +18,9 @@
       <h1>Job Tracker</h1>
       <div id="google-login" hidden>
         <p class="muted">Track your job applications, save every job description, and tailor resumes with AI.</p>
-        <p class="muted small">It's invite-only. Sign in with Google to get in, or to ask for access.</p>
+        <p class="muted small">Free to use. Sign in with your Google account to get started.</p>
         <a class="btn primary wide" href="/login/google">Sign in with Google</a>
       </div>
-      <div id="access-request" hidden></div>
       <details id="password-login" open>
         <summary>Log in with the admin password</summary>
         <form id="login-form">
@@ -41,7 +40,7 @@
         <button data-view="table">List</button>
         <button data-view="resumes">Resumes</button>
         <button data-view="profile">Profile</button>
-        <button data-view="users" hidden>Users <span id="pending-badge" class="badge" hidden></span></button>
+        <button data-view="users" hidden>Users <span id="limit-badge" class="badge" hidden></span></button>
       </nav>
       <input id="search" type="search" placeholder="Search company, title, notes…" autocomplete="off">
       <button id="add-job" class="primary" aria-label="Add job">+ <span class="label">Add job</span></button>
@@ -101,14 +100,6 @@
         <div class="resume-grid">
           <div id="users-main"></div>
           <div class="side">
-            <aside class="panel">
-              <h3>Invite someone</h3>
-              <p class="muted small">They get straight in the first time they sign in with this Google account.</p>
-              <form id="invite-form" class="row">
-                <input name="email" type="email" placeholder="friend@gmail.com" required>
-                <button class="primary" type="submit">Invite</button>
-              </form>
-            </aside>
             <aside id="users-usage" class="panel"></aside>
           </div>
         </div>

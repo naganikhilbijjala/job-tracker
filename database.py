@@ -67,14 +67,14 @@ SCHEMA = [
          content_hash TEXT NOT NULL,
          result       TEXT NOT NULL,
          created_at   TEXT NOT NULL)""",
-    # Multi-user mode: people sign in with Google. Status is pending (asked for access),
-    # active, or blocked. User 1 is always the admin, who owns the data from before.
+    # Multi-user mode: people sign in with Google. Status is active, or blocked by the admin.
+    # job_limit is NULL for the default. User 1 is always the admin, who owns the data from before.
     """CREATE TABLE IF NOT EXISTS users (
          id         INTEGER PRIMARY KEY,
          email      TEXT NOT NULL UNIQUE,
          name       TEXT NOT NULL DEFAULT '',
-         status     TEXT NOT NULL DEFAULT 'pending',
-         note       TEXT NOT NULL DEFAULT '',
+         status     TEXT NOT NULL DEFAULT 'active',
+         job_limit  INTEGER,
          created_at TEXT NOT NULL,
          last_login TEXT)""",
     """CREATE TABLE IF NOT EXISTS user_settings (

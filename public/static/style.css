@@ -207,26 +207,22 @@ td select { width: auto; padding: 3px 6px; }
 .error { color: var(--danger); margin: 12px 0 0; }
 .login-card .btn.wide { width: 100%; justify-content: center; padding: 10px; margin-top: 4px; }
 .login-card details { text-align: left; margin-top: 16px; }
-.login-card #google-login + #access-request + details { border-top: 1px solid var(--border); padding-top: 12px; }
+.login-card #google-login + details { border-top: 1px solid var(--border); padding-top: 12px; }
 .login-card #login-form { margin-top: 10px; }
-.login-card #access-request { text-align: left; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .btn.primary:hover { filter: brightness(1.08); }
 
 /* users (admin) */
 .badge { background: var(--danger); color: #fff; border-radius: 999px; font-size: 11px; padding: 0 6px; margin-left: 2px; }
 #users-main h3 { font-size: 15px; margin: 4px 0 10px; }
-#users-main h3 + .muted { margin-bottom: 20px; }
-.user-card { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-.user-card .note { margin: 6px 0 0; font-style: italic; }
-.user-card .row { margin-top: 0; }
-#users-main .panel:last-of-type { margin-bottom: 20px; }
+.warn-note { background: var(--warn-bg); color: var(--warn-text); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.pill-full { background: var(--warn-bg); color: var(--warn-text); border-radius: 999px; font-size: 11px; padding: 1px 7px; white-space: nowrap; }
 .users-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .users-table th, .users-table td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .users-table th { color: var(--muted); font-weight: 600; font-size: 12px; }
 .users-table .actions { text-align: right; white-space: nowrap; }
 .users-table .actions button { margin-left: 4px; }
-#invite-form input { flex: 1; min-width: 0; }
+.users-table td { line-height: 1.5; }
 
 .side { display: flex; flex-direction: column; gap: 16px; }
 code.copy { display: block; padding: 8px 10px; user-select: all; word-break: break-all; }
