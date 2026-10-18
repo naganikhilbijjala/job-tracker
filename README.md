@@ -118,6 +118,10 @@ Locally, data is stored in `data/tracker.db` and resumes in `data/resumes/` (fil
 
 Keyboard shortcuts: `n` adds a job, `/` searches, `Esc` closes the side panel.
 
+## Contributing
+
+This project is open source under the [MIT License](LICENSE). Bug reports, ideas and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+
 ## Notes
 - Resumes are limited to **4 MB** each, which is Vercel's upload limit.
 - **Back up** with **Export CSV** on the List tab. Turso also keeps its own backups.
@@ -134,5 +138,6 @@ Keyboard shortcuts: `n` adds a job, `/` searches, `Esc` closes the side panel.
 | `scoring.py` | Resume score: keyword match with the job description and format checks (no AI) |
 | `mcp.py`, `mcp_bridge.py` | MCP server for Claude, and the Claude Desktop bridge |
 | `public/` | The web pages, icons, and home-screen app manifest |
+| `templates/print.html` | The tailored resume page (edit, score, print to PDF) |
 | `extension/` | Chrome/Firefox "Save job" extension |
 | `pyproject.toml` | Tells Vercel how to run the app |
