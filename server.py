@@ -44,10 +44,18 @@ PORT = int(os.environ.get("JOB_TRACKER_PORT", 8765))
 LOCAL_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 ON_VERCEL = bool(os.environ.get("VERCEL"))
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
-# Sessions are signed with a key derived from the password, so changing it logs everyone out.
-SECRET = (hashlib.sha256(b"job-tracker:" + APP_PASSWORD.encode()).digest()
-          if APP_PASSWORD else secrets.token_bytes(32))
+# Multi-user mode: people sign in with Google and the admin decides who gets in.
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+MULTI_USER = bool(ADMIN_EMAIL) and gdrive.is_configured()
+ADMIN_ID = 1  # the admin is always user 1, who also owns everything from before multi-user
+# Sessions are signed with a key derived from this, so changing it logs everyone out.
+_SECRET_SOURCE = (os.environ.get("SESSION_SECRET") or APP_PASSWORD
+                  or (gdrive.client_secret() if MULTI_USER else ""))
+SECRET = (hashlib.sha256(b"job-tracker:" + _SECRET_SOURCE.encode()).digest()
+          if _SECRET_SOURCE else secrets.token_bytes(32))
 SESSION_COOKIE = "jt_session"
+REQUEST_COOKIE = "jt_request"  # lets someone waiting for approval see and add to their request
+LOGIN_COOKIE = "jt_login"  # set while a Google sign-in is in progress
 SESSION_DAYS = 180
 
 STATUSES = ["saved", "applied", "interviewing", "offer", "rejected", "withdrawn"]
@@ -86,8 +94,8 @@ _backend = None
 _backend_lock = threading.Lock()
 
 
-def backend():
-    """(db, files), opened on first use so a cold start only pays for it when needed."""
+def store():
+    """(db, files) for the whole app, opened on first use so a cold start only pays for it when needed."""
     global _backend
     with _backend_lock:
         if _backend is None:
@@ -95,28 +103,45 @@ def backend():
         return _backend
 
 
+def backend():
+    """(db, files) for the signed-in user. db.uid scopes every query on owned tables."""
+    uid = getattr(_request, "uid", None)
+    if not uid:
+        raise ApiError(401, "Please log in")
+    db, files = store()
+    return database.UserDB(db, uid), files
+
+
 def log_event(job_id, kind, detail=""):
     return ("INSERT INTO events (job_id, at, kind, detail) VALUES (?, ?, ?, ?)", (job_id, now(), kind, detail))
 
 
+# Callers append " AND …" conditions; the first parameter is always db.uid.
 JOB_LIST_SQL = """
 SELECT j.id, j.company, j.title, j.location, j.url, j.source, j.salary, j.status,
        j.notes, j.resume_id, r.label AS resume_label, j.date_applied, j.follow_up,
        j.created_at, j.updated_at, length(j.description) AS desc_len
-FROM jobs j LEFT JOIN resumes r ON r.id = j.resume_id
+FROM jobs j LEFT JOIN resumes r ON r.id = j.resume_id AND r.user_id = j.user_id
+WHERE j.user_id = ?
 """
 
 
 def job_summary(db, job_id):
-    rows = db.query(JOB_LIST_SQL + " WHERE j.id = ?", (job_id,))
+    rows = db.query(JOB_LIST_SQL + " AND j.id = ?", (db.uid, job_id))
     return rows[0] if rows else None
 
 
+# The find_* helpers are the ownership check: anything fetched by id goes through one first.
 def find_job(db, job_id):
-    rows = db.query("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    rows = db.query("SELECT * FROM jobs WHERE id = ? AND user_id = ?", (job_id, db.uid))
     if not rows:
         raise ApiError(404, "Job not found")
     return rows[0]
+
+
+def check_resume_owner(db, fields):
+    if fields.get("resume_id"):
+        find_resume(db, fields["resume_id"])
 
 
 def normalize_url(url):
@@ -177,7 +202,9 @@ def insert_job(db, fields):
     fields.setdefault("status", "saved")
     if fields.get("url") and not fields.get("source"):
         fields["source"] = urllib.parse.urlsplit(fields["url"]).netloc.removeprefix("www.")
+    check_resume_owner(db, fields)
     status_side_effects(fields, None)
+    fields["user_id"] = db.uid
     fields["created_at"] = fields["updated_at"] = now()
     cols = ", ".join(fields)
     marks = ", ".join("?" * len(fields))
@@ -188,38 +215,40 @@ def insert_job(db, fields):
 
 def update_job(db, job_id, fields):
     old = find_job(db, job_id)
+    check_resume_owner(db, fields)
     status_side_effects(fields, old)
     if not fields:
         return
     fields["updated_at"] = now()
     sets = ", ".join(f"{k} = ?" for k in fields)
-    statements = [(f"UPDATE jobs SET {sets} WHERE id = ?", [*fields.values(), job_id])]
+    statements = [(f"UPDATE jobs SET {sets} WHERE id = ? AND user_id = ?", [*fields.values(), job_id, db.uid])]
     if "status" in fields and fields["status"] != old["status"]:
         statements.append(log_event(job_id, "status", f"{old['status']} → {fields['status']}"))
     if fields.get("resume_id") and fields["resume_id"] != old["resume_id"]:
         statements.append(("INSERT INTO events (job_id, at, kind, detail) "
-                           "SELECT ?, ?, 'resume', label FROM resumes WHERE id = ?",
-                           (job_id, now(), fields["resume_id"])))
+                           "SELECT ?, ?, 'resume', label FROM resumes WHERE id = ? AND user_id = ?",
+                           (job_id, now(), fields["resume_id"], db.uid)))
     db.run_many(statements)
 
 
 def sync_resume_folder(db, files):
-    """Pick up files dropped straight into data/resumes/ (local mode only)."""
-    if files.kind != "folder":
+    """Pick up files dropped straight into data/resumes/ (local, single-user mode only)."""
+    if files.kind != "folder" or db.uid != ADMIN_ID:
         return
     known = {r["filename"] for r in db.query("SELECT filename FROM resumes")}
     for p in sorted(files.folder.iterdir()):
         if p.is_file() and p.suffix.lower() in RESUME_EXTS and p.name not in known:
             st = p.stat()
-            db.execute("INSERT INTO resumes (label, filename, size, uploaded_at) VALUES (?, ?, ?, ?)",
-                       (p.stem, p.name, st.st_size, datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")))
+            db.execute("INSERT INTO resumes (user_id, label, filename, size, uploaded_at) VALUES (?, ?, ?, ?, ?)",
+                       (db.uid, p.stem, p.name, st.st_size,
+                        datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")))
 
 
 def list_resumes(db, files, only_id=None):
     sync_resume_folder(db, files)
     rows = db.query("""
-        SELECT r.*, (SELECT count(*) FROM jobs j WHERE j.resume_id = r.id) AS job_count
-        FROM resumes r ORDER BY r.uploaded_at DESC""")
+        SELECT r.*, (SELECT count(*) FROM jobs j WHERE j.resume_id = r.id AND j.user_id = r.user_id) AS job_count
+        FROM resumes r WHERE r.user_id = ? ORDER BY r.uploaded_at DESC""", (db.uid,))
     out = [{**r, "missing": files.missing(r)} for r in rows]
     if only_id is not None:
         return next((r for r in out if r["id"] == int(only_id)), None)
@@ -227,7 +256,7 @@ def list_resumes(db, files, only_id=None):
 
 
 def find_resume(db, rid):
-    rows = db.query("SELECT * FROM resumes WHERE id = ?", (rid,))
+    rows = db.query("SELECT * FROM resumes WHERE id = ? AND user_id = ?", (rid, db.uid))
     if not rows:
         raise ApiError(404, "Resume not found")
     return rows[0]
@@ -253,7 +282,8 @@ def push_to_drive(db, files, resume):
         raise ApiError(404, f"{resume['filename']} is missing")
     mime = mimetypes.guess_type(resume["filename"])[0] or "application/octet-stream"
     file_id, link = gdrive.upload(db, content, resume["filename"], mime)
-    db.execute("UPDATE resumes SET drive_id = ?, drive_link = ? WHERE id = ?", (file_id, link, resume["id"]))
+    db.execute("UPDATE resumes SET drive_id = ?, drive_link = ? WHERE id = ? AND user_id = ?",
+               (file_id, link, resume["id"], db.uid))
 
 
 # ---------------------------------------------------------------- job page parsing
@@ -571,12 +601,42 @@ def verify(token, prefix):
             and len(parts) > 1 and parts[1].isdigit() and int(parts[1]) > time.time())
 
 
-def is_logged_in(req):
-    if not APP_PASSWORD:
-        return not ON_VERCEL  # a public deployment must never run without a password
+def session_token(uid, days=SESSION_DAYS):
+    return sign(f"session:{int(time.time()) + days * 86400}:{uid}")
+
+
+def token_user(token):
+    """The user id a session token was issued to, or None if it's invalid or expired."""
+    if not verify(token, "session"):
+        return None
+    parts = token.rpartition(".")[0].split(":")
+    return int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else ADMIN_ID  # pre-multi-user tokens
+
+
+def is_active(uid):
+    if uid == ADMIN_ID:
+        return True
+    return bool(store()[0].query("SELECT 1 FROM users WHERE id = ? AND status = 'active'", (uid,)))
+
+
+def request_user(req):
+    """Who is making this request: a user id, or None if nobody is logged in."""
+    if not APP_PASSWORD and not MULTI_USER:
+        return None if ON_VERCEL else ADMIN_ID  # a public deployment must never run without a login
     auth = req.header("Authorization")
-    token = auth[7:] if auth.startswith("Bearer ") else req.cookie(SESSION_COOKIE)
-    return verify(token, "session")
+    uid = token_user(auth[7:] if auth.startswith("Bearer ") else req.cookie(SESSION_COOKIE))
+    if uid is None or (MULTI_USER and not is_active(uid)):  # removed users are logged out at once
+        return None
+    return uid
+
+
+def is_admin():
+    return getattr(_request, "uid", None) == ADMIN_ID
+
+
+def require_admin():
+    if not MULTI_USER or not is_admin():
+        raise ApiError(403, "Only the admin can do that")
 
 
 # ---------------------------------------------------------------- HTTP plumbing
@@ -679,12 +739,15 @@ def dispatch(req):
     method = "GET" if req.method == "HEAD" else req.method
     for m, pattern, fn, public in ROUTES:
         if m == method and (match := pattern.fullmatch(req.path)):
-            if not public and not is_logged_in(req):
-                if ON_VERCEL and not APP_PASSWORD:
-                    raise ApiError(503, "Set APP_PASSWORD in the Vercel project's Environment Variables, then redeploy.")
-                if method == "GET" and not req.path.startswith("/api/"):
-                    return redirect("/")
-                raise ApiError(401, "Please log in")
+            if not public:
+                _request.uid = request_user(req)
+                if _request.uid is None:
+                    if ON_VERCEL and not APP_PASSWORD and not MULTI_USER:
+                        raise ApiError(503, "Set APP_PASSWORD (or ADMIN_EMAIL with Google sign-in) in the Vercel "
+                                            "project's Environment Variables, then redeploy.")
+                    if method == "GET" and not req.path.startswith("/api/"):
+                        return redirect("/")
+                    raise ApiError(401, "Please log in")
             return fn(req, *match.groups())
     if method == "GET":
         return serve_public(req.path)
@@ -694,6 +757,7 @@ def dispatch(req):
 def app(environ, start_response):
     """WSGI entry point (used by Vercel and by the local server)."""
     req = Request(environ)
+    _request.uid = None  # threads are reused across requests
     client_day = req.header("X-Today")
     _request.today = client_day if re.fullmatch(r"\d{4}-\d{2}-\d{2}", client_day) else None
     try:
@@ -711,36 +775,202 @@ def app(environ, start_response):
 
 # ---------------------------------------------------------------- routes: session
 
+def cookie(req, name, value, max_age):
+    return ("Set-Cookie", f"{name}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax"
+                          + ("; Secure" if req.scheme == "https" else ""))
+
+
+def session_cookie(req, uid):
+    return cookie(req, SESSION_COOKIE, session_token(uid), SESSION_DAYS * 86400)
+
+
 @route("POST", r"/api/login", public=True)
 def login(req):
+    secret = str(req.json().get("password", ""))
+    # The browser extension connects with a code from the Resumes tab (a long-lived session token).
+    if MULTI_USER and (uid := token_user(secret)) is not None and is_active(uid):
+        return json_response({"token": secret})
     if not APP_PASSWORD:
-        raise ApiError(400, "This tracker has no password set")
-    if not hmac.compare_digest(str(req.json().get("password", "")).encode(), APP_PASSWORD.encode()):
+        raise ApiError(400, "Sign in with Google instead" if MULTI_USER else "This tracker has no password set")
+    if not hmac.compare_digest(secret.encode(), APP_PASSWORD.encode()):
         time.sleep(1)  # slows down password guessing
-        raise ApiError(401, "Wrong password")
-    token = sign(f"session:{int(time.time()) + SESSION_DAYS * 86400}")
-    cookie = (f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_DAYS * 86400}; HttpOnly; SameSite=Lax"
-              + ("; Secure" if req.scheme == "https" else ""))
-    return json_response({"token": token}, headers=[("Set-Cookie", cookie)])
+        raise ApiError(401, "Wrong password" + (" or connection code" if MULTI_USER else ""))
+    token = session_token(ADMIN_ID)  # the password belongs to the admin
+    return json_response({"token": token}, headers=[cookie(req, SESSION_COOKIE, token, SESSION_DAYS * 86400)])
 
 
 @route("POST", r"/api/logout", public=True)
 def logout(req):
-    return json_response({"ok": True}, headers=[("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0")])
+    return json_response({"ok": True}, headers=[("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0"),
+                                                ("Set-Cookie", f"{REQUEST_COOKIE}=; Path=/; Max-Age=0")])
+
+
+# ---------------------------------------------------------------- routes: Google sign-in & access
+
+def ensure_admin(db, name=""):
+    """Create the admin's row as user 1 before anyone else, so nobody else can ever become user 1."""
+    db.run_many([
+        ("INSERT OR IGNORE INTO users (id, email, name, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+         (ADMIN_ID, ADMIN_EMAIL, name, now())),
+        ("UPDATE users SET email = ?, status = 'active', name = CASE WHEN ? != '' THEN ? ELSE name END "
+         "WHERE id = ?", (ADMIN_EMAIL, name, name, ADMIN_ID)),
+    ])
+
+
+def access_request(req):
+    """The pending/declined request of someone who signed in but isn't let in yet."""
+    token = req.cookie(REQUEST_COOKIE)
+    if not MULTI_USER or not verify(token, "request"):
+        return None
+    uid = int(token.rpartition(".")[0].split(":")[2])
+    rows = store()[0].query("SELECT id, email, name, status, note FROM users WHERE id = ?", (uid,))
+    return rows[0] if rows and rows[0]["status"] != "active" else None
+
+
+@route("GET", r"/login/google", public=True)
+def google_login(req):
+    if not MULTI_USER:
+        raise ApiError(404, "Google sign-in isn't set up on this tracker")
+    # The nonce cookie ties the sign-in to this browser, so nobody can sign you into their account
+    # by sending you a link to the end of their own sign-in.
+    nonce = secrets.token_hex(16)
+    state = sign(f"login:{int(time.time()) + 900}:{nonce}")
+    return response(b"", "text/plain", 302, [("Location", gdrive.login_url(redirect_uri(req), state)),
+                                             cookie(req, LOGIN_COOKIE, nonce, 900)])
+
+
+def finish_google_login(req):
+    if "error" in req.query:  # e.g. they closed Google's account chooser
+        return redirect("/")
+    state = req.query.get("state", "")
+    if not verify(state, "login") or not hmac.compare_digest(state.rpartition(".")[0].split(":")[2],
+                                                             req.cookie(LOGIN_COOKIE) or "-"):
+        raise ApiError(400, "Sign-in expired or didn't match. Go back and try again.")
+    try:
+        person = gdrive.signed_in_user(req.query.get("code", ""), redirect_uri(req))
+    except gdrive.DriveError as e:
+        return redirect(f"/?login_error={urllib.parse.quote(str(e)[:200])}")
+    db, _ = store()
+    ensure_admin(db)
+    if person["email"] == ADMIN_EMAIL:
+        ensure_admin(db, person["name"])
+        uid = ADMIN_ID
+    else:
+        rows = db.query("SELECT id, status FROM users WHERE email = ?", (person["email"],))
+        uid = rows[0]["id"] if rows else db.execute(
+            "INSERT INTO users (email, name, status, created_at) VALUES (?, ?, 'pending', ?)",
+            (person["email"], person["name"], now()))
+        if rows and person["name"]:
+            db.execute("UPDATE users SET name = ? WHERE id = ? AND name = ''", (person["name"], uid))
+        if not rows or rows[0]["status"] != "active":
+            token = sign(f"request:{int(time.time()) + 30 * 86400}:{uid}")
+            return response(b"", "text/plain", 302, [("Location", "/"), cookie(req, REQUEST_COOKIE, token, 30 * 86400),
+                                                     ("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0")])
+    db.execute("UPDATE users SET last_login = ? WHERE id = ?", (now(), uid))
+    return response(b"", "text/plain", 302, [("Location", "/"), session_cookie(req, uid),
+                                             ("Set-Cookie", f"{REQUEST_COOKIE}=; Path=/; Max-Age=0")])
+
+
+@route("POST", r"/api/access/note", public=True)
+def access_note(req):
+    request = access_request(req)
+    if not request or request["status"] != "pending":
+        raise ApiError(403, "No access request to update")
+    note = str(req.json().get("note", "")).strip()[:500]
+    store()[0].execute("UPDATE users SET note = ? WHERE id = ? AND status = 'pending'", (note, request["id"]))
+    return json_response({"ok": True})
+
+
+@route("GET", r"/api/admin/users")
+def admin_users(req):
+    require_admin()
+    db, _ = store()
+    ensure_admin(db)
+    return json_response(db.query("""
+        SELECT u.id, u.email, u.name, u.status, u.note, u.created_at, u.last_login,
+               (SELECT count(*) FROM jobs j WHERE j.user_id = u.id) AS jobs,
+               (SELECT coalesce(sum(r.size), 0) FROM resumes r WHERE r.user_id = u.id) AS resume_bytes
+        FROM users u ORDER BY u.status = 'pending' DESC, u.created_at DESC"""))
+
+
+@route("POST", r"/api/admin/users")
+def admin_invite(req):
+    """Invite someone: they get straight in the first time they sign in with this Google account."""
+    require_admin()
+    email = str(req.json().get("email", "")).strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise ApiError(400, "That doesn't look like an email address")
+    db, _ = store()
+    ensure_admin(db)
+    db.execute("INSERT INTO users (email, status, created_at) VALUES (?, 'active', ?) "
+               "ON CONFLICT(email) DO UPDATE SET status = 'active'", (email, now()))
+    return json_response({"ok": True}, 201)
+
+
+@route("PUT", r"/api/admin/users/(\d+)")
+def admin_set_status(req, uid):
+    require_admin()
+    status = req.json().get("status")
+    if status not in ("active", "blocked"):
+        raise ApiError(400, "status must be active or blocked")
+    if int(uid) == ADMIN_ID:
+        raise ApiError(400, "You can't change your own access")
+    store()[0].execute("UPDATE users SET status = ? WHERE id = ?", (status, uid))
+    return json_response({"ok": True})
+
+
+@route("DELETE", r"/api/admin/users/(\d+)")
+def admin_delete_user(req, uid):
+    """Delete someone and everything they stored. Signing in again starts a new request."""
+    require_admin()
+    uid = int(uid)
+    if uid == ADMIN_ID:
+        raise ApiError(400, "You can't delete yourself")
+    db, files = store()
+    for r in db.query("SELECT id, filename FROM resumes WHERE user_id = ?", (uid,)):
+        files.delete(r["id"], r["filename"])
+    jobs = "SELECT id FROM jobs WHERE user_id = ?"
+    db.run_many([
+        (f"DELETE FROM events WHERE job_id IN ({jobs})", (uid,)),
+        (f"DELETE FROM chat_messages WHERE job_id IN ({jobs})", (uid,)),
+        ("DELETE FROM resume_reviews WHERE generated_id IN (SELECT id FROM generated_resumes WHERE user_id = ?)",
+         (uid,)),
+        ("DELETE FROM generated_resumes WHERE user_id = ?", (uid,)),
+        ("DELETE FROM jobs WHERE user_id = ?", (uid,)),
+        ("DELETE FROM resumes WHERE user_id = ?", (uid,)),
+        ("DELETE FROM user_settings WHERE user_id = ?", (uid,)),
+        ("DELETE FROM users WHERE id = ?", (uid,)),
+    ])
+    return json_response({"ok": True})
+
+
+@route("POST", r"/api/extension-code")
+def extension_code(req):
+    """A connection code for the browser extension (Google sign-in can't run inside it)."""
+    return json_response({"code": session_token(_request.uid, days=365)})
 
 
 @route("GET", r"/api/meta", public=True)
 def meta(req):
-    auth = {"required": bool(APP_PASSWORD) or ON_VERCEL, "ok": is_logged_in(req)}
+    _request.uid = request_user(req)
+    auth = {"required": bool(APP_PASSWORD) or ON_VERCEL or MULTI_USER, "ok": _request.uid is not None,
+            "google": MULTI_USER, "password": bool(APP_PASSWORD)}
     if not auth["ok"]:
-        return json_response({"auth": auth, "statuses": STATUSES})
+        return json_response({"auth": auth, "statuses": STATUSES, "request": access_request(req)})
     db, files = backend()
+    user = None
+    if MULTI_USER:
+        rows = db.query("SELECT email, name FROM users WHERE id = ?", (db.uid,))
+        user = {**(rows[0] if rows else {"email": ADMIN_EMAIL, "name": ""}), "is_admin": is_admin()}
+        if is_admin():
+            user["pending"] = db.query("SELECT count(*) AS n FROM users WHERE status = 'pending'")[0]["n"]
     return json_response({
         "auth": auth,
+        "user": user,
         "statuses": STATUSES,
         "origin": req.origin,
         "storage": files.kind,
-        "resume_dir": str(files.folder) if files.kind == "folder" else None,
+        "resume_dir": str(files.folder) if files.kind == "folder" and db.uid == ADMIN_ID else None,
         "drive": {"configured": gdrive.is_configured(), "connected": gdrive.is_connected(db),
                   "folder_link": gdrive.cached_folder_link(db)},
     })
@@ -751,14 +981,14 @@ def meta(req):
 @route("GET", r"/api/jobs")
 def jobs_list(req):
     db, _ = backend()
-    return json_response(db.query(JOB_LIST_SQL + " ORDER BY j.updated_at DESC"))
+    return json_response(db.query(JOB_LIST_SQL + " ORDER BY j.updated_at DESC", (db.uid,)))
 
 
 @route("GET", r"/api/jobs/lookup")
 def jobs_lookup(req):
     db, _ = backend()
     url = normalize_url(req.query.get("url", ""))
-    rows = db.query(JOB_LIST_SQL + " WHERE j.url = ? AND j.url != ''", (url,))
+    rows = db.query(JOB_LIST_SQL + " AND j.url = ? AND j.url != ''", (db.uid, url))
     return json_response({"job": rows[0] if rows else None})
 
 
@@ -782,7 +1012,7 @@ def jobs_capture(req):
     """Used by the browser extension: create, or merge into the job with the same URL."""
     db, _ = backend()
     fields = clean_job(req.json())
-    rows = db.query("SELECT * FROM jobs WHERE url = ? AND url != ''", (fields.get("url", ""),))
+    rows = db.query("SELECT * FROM jobs WHERE user_id = ? AND url = ? AND url != ''", (db.uid, fields.get("url", "")))
     if not rows:
         job_id = insert_job(db, fields)
         return json_response({"created": True, "job": job_summary(db, job_id)}, 201)
@@ -813,12 +1043,13 @@ def jobs_update(req, job_id):
 @route("DELETE", r"/api/jobs/(\d+)")
 def jobs_delete(req, job_id):
     db, _ = backend()
+    find_job(db, job_id)
     db.run_many([("DELETE FROM events WHERE job_id = ?", (job_id,)),
                  ("DELETE FROM chat_messages WHERE job_id = ?", (job_id,)),
                  ("DELETE FROM resume_reviews WHERE generated_id IN "
                   "(SELECT id FROM generated_resumes WHERE job_id = ?)", (job_id,)),
                  ("DELETE FROM generated_resumes WHERE job_id = ?", (job_id,)),
-                 ("DELETE FROM jobs WHERE id = ?", (job_id,))])
+                 ("DELETE FROM jobs WHERE id = ? AND user_id = ?", (job_id, db.uid))])
     return json_response({"ok": True})
 
 
@@ -833,7 +1064,8 @@ def export_csv(req):
     rows = db.query("""
         SELECT j.company, j.title, j.status, j.date_applied, j.follow_up, j.location, j.salary,
                j.source, j.url, r.label AS resume, j.notes, j.created_at, j.updated_at
-        FROM jobs j LEFT JOIN resumes r ON r.id = j.resume_id ORDER BY j.created_at""")
+        FROM jobs j LEFT JOIN resumes r ON r.id = j.resume_id AND r.user_id = j.user_id
+        WHERE j.user_id = ? ORDER BY j.created_at""", (db.uid,))
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(rows[0].keys() if rows else ["company", "title", "status"])
@@ -860,8 +1092,8 @@ def resumes_upload(req):
         raise ApiError(400, "Empty file")
     filename = safe_filename(original, files)
     label = urllib.parse.unquote(req.header("X-Label")).strip() or Path(filename).stem
-    rid = db.execute("INSERT INTO resumes (label, filename, size, uploaded_at) VALUES (?, ?, ?, ?)",
-                     (label, filename, len(content), now()))
+    rid = db.execute("INSERT INTO resumes (user_id, label, filename, size, uploaded_at) VALUES (?, ?, ?, ?, ?)",
+                     (db.uid, label, filename, len(content), now()))
     try:
         files.save(rid, filename, content)
     except Exception:
@@ -892,7 +1124,8 @@ def resumes_rename(req, rid):
     label = str(req.json().get("label", "")).strip()
     if not label:
         raise ApiError(400, "Label can't be empty")
-    db.execute("UPDATE resumes SET label = ? WHERE id = ?", (label, rid))
+    find_resume(db, rid)
+    db.execute("UPDATE resumes SET label = ? WHERE id = ? AND user_id = ?", (label, rid, db.uid))
     return json_response({"ok": True})
 
 
@@ -901,8 +1134,8 @@ def resumes_delete(req, rid):
     db, files = backend()
     resume = find_resume(db, rid)
     files.delete(resume["id"], resume["filename"])
-    db.run_many([("UPDATE jobs SET resume_id = NULL WHERE resume_id = ?", (rid,)),
-                 ("DELETE FROM resumes WHERE id = ?", (rid,))])
+    db.run_many([("UPDATE jobs SET resume_id = NULL WHERE resume_id = ? AND user_id = ?", (rid, db.uid)),
+                 ("DELETE FROM resumes WHERE id = ? AND user_id = ?", (rid, db.uid))])
     return json_response({"ok": True})
 
 
@@ -921,13 +1154,22 @@ def redirect_uri(req):
 
 @route("GET", r"/drive/connect")
 def drive_connect(req):
-    state = sign(f"oauth:{int(time.time()) + 900}:{secrets.token_hex(8)}")
+    db, _ = backend()
+    state = sign(f"oauth:{int(time.time()) + 900}:{db.uid}:{secrets.token_hex(8)}")
     return redirect(gdrive.auth_url(redirect_uri(req), state))
 
 
-@route("GET", r"/oauth2callback")
-def drive_callback(req):
-    if not verify(req.query.get("state", ""), "oauth"):
+@route("GET", r"/oauth2callback", public=True)
+def google_callback(req):
+    # One redirect address for both "Sign in with Google" and connecting Drive; the state says which.
+    if req.query.get("state", "").startswith("login:"):
+        return finish_google_login(req)
+    _request.uid = request_user(req)
+    state = req.query.get("state", "")
+    if _request.uid is None:
+        return redirect("/")
+    # The state names the user who started connecting, so nobody can attach their Drive to your account.
+    if not verify(state, "oauth") or state.split(":")[2] != str(_request.uid):
         raise ApiError(400, "Google sign-in expired or didn't match — start again from the Resumes tab")
     if "error" in req.query:
         return redirect(f"/?drive_error={urllib.parse.quote(req.query['error'])}#resumes")
@@ -1038,7 +1280,8 @@ def ai_test(req):
 
 
 def assistant_prompt(db, job):
-    resume = db.query("SELECT label FROM resumes WHERE id = ?", (job["resume_id"],)) if job["resume_id"] else []
+    resume = db.query("SELECT label FROM resumes WHERE id = ? AND user_id = ?",
+                      (job["resume_id"], db.uid)) if job["resume_id"] else []
     return ai.system_prompt(db.get_setting("profile") or "", db.get_setting("ai_instructions") or "",
                             job, resume[0]["label"] if resume else "")
 
@@ -1046,6 +1289,7 @@ def assistant_prompt(db, job):
 @route("GET", r"/api/jobs/(\d+)/chat")
 def chat_history(req, job_id):
     db, _ = backend()
+    find_job(db, job_id)
     return json_response(db.query("SELECT id, role, content, created_at FROM chat_messages "
                                   "WHERE job_id = ? ORDER BY id", (job_id,)))
 
@@ -1076,6 +1320,7 @@ def chat_send(req, job_id):
 @route("DELETE", r"/api/jobs/(\d+)/chat")
 def chat_clear(req, job_id):
     db, _ = backend()
+    find_job(db, job_id)
     db.execute("DELETE FROM chat_messages WHERE job_id = ?", (job_id,))
     return json_response({"ok": True})
 
@@ -1089,8 +1334,8 @@ def save_generated(db, job_id, content, title="", source="app"):
         name = re.match(r"#\s+(.+)", content)
         parts = [name.group(1).strip() if name else "Resume", job["company"] if job else "", today()]
         title = " - ".join(p for p in parts if p)
-    return db.execute("INSERT INTO generated_resumes (job_id, title, content, source, created_at) "
-                      "VALUES (?, ?, ?, ?, ?)", (job_id, title, content, source, now()))
+    return db.execute("INSERT INTO generated_resumes (user_id, job_id, title, content, source, created_at) "
+                      "VALUES (?, ?, ?, ?, ?, ?)", (db.uid, job_id, title, content, source, now()))
 
 
 @route("GET", r"/api/generated")
@@ -1098,11 +1343,12 @@ def generated_list(req):
     db, _ = backend()
     job_id = req.query.get("job_id")
     sql = ("SELECT g.id, g.job_id, g.title, g.source, g.created_at, j.company, j.title AS job_title "
-           "FROM generated_resumes g LEFT JOIN jobs j ON j.id = g.job_id")
+           "FROM generated_resumes g LEFT JOIN jobs j ON j.id = g.job_id AND j.user_id = g.user_id "
+           "WHERE g.user_id = ?")
     if not job_id:
-        return json_response(db.query(sql + " ORDER BY g.id DESC"))
-    rows = db.query(sql.replace("g.created_at,", "g.created_at, g.content,") + " WHERE g.job_id = ? ORDER BY g.id DESC",
-                    (job_id,))
+        return json_response(db.query(sql + " ORDER BY g.id DESC", (db.uid,)))
+    rows = db.query(sql.replace("g.created_at,", "g.created_at, g.content,") + " AND g.job_id = ? ORDER BY g.id DESC",
+                    (db.uid, job_id))
     for r in rows:  # one job's few resumes: cheap enough to score on the fly
         r["score"] = check_resume(db, r)["score"]
         del r["content"]
@@ -1127,20 +1373,23 @@ def generated_get(req, gid):
 def generated_update(req, gid):
     db, _ = backend()
     data = req.json()
-    db.execute("UPDATE generated_resumes SET content = ? WHERE id = ?", (str(data.get("content", "")), gid))
+    find_generated(db, gid)
+    db.execute("UPDATE generated_resumes SET content = ? WHERE id = ? AND user_id = ?",
+               (str(data.get("content", "")), gid, db.uid))
     return json_response({"ok": True})
 
 
 @route("DELETE", r"/api/generated/(\d+)")
 def generated_delete(req, gid):
     db, _ = backend()
+    find_generated(db, gid)
     db.run_many([("DELETE FROM resume_reviews WHERE generated_id = ?", (gid,)),
-                 ("DELETE FROM generated_resumes WHERE id = ?", (gid,))])
+                 ("DELETE FROM generated_resumes WHERE id = ? AND user_id = ?", (gid, db.uid))])
     return json_response({"ok": True})
 
 
 def find_generated(db, gid):
-    rows = db.query("SELECT * FROM generated_resumes WHERE id = ?", (gid,))
+    rows = db.query("SELECT * FROM generated_resumes WHERE id = ? AND user_id = ?", (gid, db.uid))
     if not rows:
         raise ApiError(404, "Resume not found")
     return rows[0]
@@ -1152,7 +1401,8 @@ def content_hash(content):
 
 def check_resume(db, doc):
     """Keyword and format scores for a tailored resume (no AI, so it's instant and free)."""
-    job = db.query("SELECT id, company, title, description FROM jobs WHERE id = ?", (doc["job_id"],)) \
+    job = db.query("SELECT id, company, title, description FROM jobs WHERE id = ? AND user_id = ?",
+                   (doc["job_id"], db.uid)) \
         if doc["job_id"] else []
     job = job[0] if job else {}
     return {**scoring.score_resume(doc["content"], job.get("description", ""), db.get_setting("profile") or "",
@@ -1180,7 +1430,7 @@ def generated_check(req, gid):
 def generated_review(req, gid):
     db, _ = backend()
     doc = find_generated(db, gid)
-    job = db.query("SELECT * FROM jobs WHERE id = ?", (doc["job_id"],)) if doc["job_id"] else []
+    job = db.query("SELECT * FROM jobs WHERE id = ? AND user_id = ?", (doc["job_id"], db.uid)) if doc["job_id"] else []
     try:
         result = ai.review_resume(ai_config(db), db.get_setting("profile") or "", job[0] if job else {},
                                   doc["content"])
@@ -1228,7 +1478,7 @@ def mcp_tools(db, origin):
                 "instructions": db.get_setting("ai_instructions") or ""}
 
     def list_jobs(status=None, query=None, limit=50):
-        rows = db.query(JOB_LIST_SQL + " ORDER BY j.updated_at DESC")
+        rows = db.query(JOB_LIST_SQL + " ORDER BY j.updated_at DESC", (db.uid,))
         if status:
             rows = [r for r in rows if r["status"] == status]
         if query:
@@ -1239,14 +1489,15 @@ def mcp_tools(db, origin):
         return [{k: r[k] for k in keys} for r in rows[:max(1, min(int(limit), 200))]]
 
     def get_job(job_id):
-        rows = db.query("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        rows = db.query("SELECT * FROM jobs WHERE id = ? AND user_id = ?", (job_id, db.uid))
         if not rows:
             raise mcp.ToolError(f"No job with id {job_id}")
         job = rows[0]
-        resume = db.query("SELECT label FROM resumes WHERE id = ?", (job["resume_id"],)) if job["resume_id"] else []
+        resume = db.query("SELECT label FROM resumes WHERE id = ? AND user_id = ?",
+                          (job["resume_id"], db.uid)) if job["resume_id"] else []
         job["resume_sent"] = resume[0]["label"] if resume else None
-        job["tailored_resumes"] = db.query("SELECT id, title, created_at FROM generated_resumes WHERE job_id = ?",
-                                           (job_id,))
+        job["tailored_resumes"] = db.query("SELECT id, title, created_at FROM generated_resumes "
+                                           "WHERE job_id = ? AND user_id = ?", (job_id, db.uid))
         job["history"] = db.query("SELECT at, kind, detail FROM events WHERE job_id = ? ORDER BY id", (job_id,))
         return job
 
@@ -1255,12 +1506,12 @@ def mcp_tools(db, origin):
                 for r in list_resumes(*backend())]
 
     def list_tailored_resumes(job_id=None):
-        sql = "SELECT id, job_id, title, source, created_at FROM generated_resumes"
-        return db.query(sql + " WHERE job_id = ? ORDER BY id DESC", (job_id,)) if job_id \
-            else db.query(sql + " ORDER BY id DESC LIMIT 100")
+        sql = "SELECT id, job_id, title, source, created_at FROM generated_resumes WHERE user_id = ?"
+        return db.query(sql + " AND job_id = ? ORDER BY id DESC", (db.uid, job_id)) if job_id \
+            else db.query(sql + " ORDER BY id DESC LIMIT 100", (db.uid,))
 
     def get_tailored_resume(resume_id):
-        rows = db.query("SELECT * FROM generated_resumes WHERE id = ?", (resume_id,))
+        rows = db.query("SELECT * FROM generated_resumes WHERE id = ? AND user_id = ?", (resume_id, db.uid))
         if not rows:
             raise mcp.ToolError(f"No tailored resume with id {resume_id}")
         return rows[0]
@@ -1292,16 +1543,17 @@ def mcp_tools(db, origin):
             raise mcp.ToolError(e.message) from None
 
     def update_tailored_resume(resume_id, content):
-        if not db.query("SELECT 1 FROM generated_resumes WHERE id = ?", (resume_id,)):
+        if not db.query("SELECT 1 FROM generated_resumes WHERE id = ? AND user_id = ?", (resume_id, db.uid)):
             raise mcp.ToolError(f"No tailored resume with id {resume_id}")
         if not str(content).strip():
             raise mcp.ToolError("content is empty")
-        db.execute("UPDATE generated_resumes SET content = ? WHERE id = ?", (str(content).strip(), resume_id))
+        db.execute("UPDATE generated_resumes SET content = ? WHERE id = ? AND user_id = ?",
+                   (str(content).strip(), resume_id, db.uid))
         return {"id": resume_id, "open_to_print_as_pdf": f"{origin}/resume/{resume_id}",
                 "check": check_summary(resume_id)}
 
     def change_job(job_id, status=None, note=None):
-        rows = db.query("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        rows = db.query("SELECT * FROM jobs WHERE id = ? AND user_id = ?", (job_id, db.uid))
         if not rows:
             raise mcp.ToolError(f"No job with id {job_id}")
         fields = {}
@@ -1360,13 +1612,15 @@ MCP_INSTRUCTIONS = ("Job Tracker holds the user's job applications, saved job de
 
 @route("POST", r"/mcp", public=True)
 def mcp_endpoint(req):
-    db, _ = backend()
     auth = req.header("Authorization")
     token = auth[7:] if auth.startswith("Bearer ") else req.query.get("key", "")
-    expected = db.get_setting("mcp_token")
-    if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
+    rows = store()[0].query("SELECT user_id FROM user_settings WHERE key = 'mcp_token' AND value = ?",
+                            (token,)) if token else []
+    if not rows or (MULTI_USER and not is_active(rows[0]["user_id"])):
         time.sleep(1)
         raise ApiError(401, "Invalid MCP token — copy it from the Profile tab")
+    _request.uid = rows[0]["user_id"]
+    db, _ = backend()
     try:
         payload = json.loads(req.body() or b"null")
     except ValueError:
@@ -1401,7 +1655,7 @@ class QuietHandler(WSGIRequestHandler):
 
 
 def main():
-    backend()
+    store()
     server = make_server(HOST, PORT, app, server_class=ThreadingWSGIServer, handler_class=QuietHandler)
     url = f"http://{HOST}:{PORT}"
     print(f"Job Tracker running at {url}  (Ctrl+C to stop)")

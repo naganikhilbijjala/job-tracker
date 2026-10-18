@@ -109,6 +109,32 @@ Every resume you upload is then also copied to a **"Job Tracker Resumes"** folde
 
 ---
 
+## Share it with friends (Google sign-in)
+
+One deployment and one database can serve you and your friends. Everyone signs in with Google and sees only their own jobs, resumes and chats. You decide who gets in.
+
+1. **Google Cloud** (if you set up Drive backup above, reuse the same project and OAuth client):
+   - Create a project at https://console.cloud.google.com/projectcreate.
+   - **OAuth consent screen** → External. Sign-in only asks for name and email.
+   - **Credentials → Create credentials → OAuth client ID** → **Web application**, with the redirect URI `https://YOUR-APP.vercel.app/oauth2callback`.
+   - On the consent screen, click **Publish app**. While it's in "Testing" mode, only Google accounts you list as test users can sign in.
+2. **Vercel → Settings → Environment Variables**, then redeploy:
+
+   | Name | Value |
+   |---|---|
+   | `ADMIN_EMAIL` | Your Gmail address. This account is the admin. |
+   | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | From step 1 |
+   | `APP_PASSWORD` | Keep it. It still logs you in as the admin, and keeps you, your phone and the extension logged in. |
+
+3. **Sign in with Google** using your `ADMIN_EMAIL` account. Everything you already had stays yours.
+4. **Send friends the link.** When someone signs in, they see "waiting for approval" and can leave you a message. You get a red badge on the **Users** tab, where you approve or decline. You can also **invite** an email address there, and that person gets straight in. **Remove access** signs someone out everywhere immediately; their data stays until you **Delete data**.
+
+Each person uses their own AI key (Profile tab) and their own Claude/MCP token. For the browser extension, they click **Get connection code** on the Resumes tab and paste it in place of a password.
+
+**Good to know:**
+- As the owner of the database, you can technically read everyone's data, including the AI keys they save. Tell your friends.
+- The **Users** tab shows how many jobs and how much resume storage each person uses. Turso's free plan includes 5 GB, which is far more than a group of friends needs.
+
 ## Run it on your computer instead
 
 ```bash
@@ -117,6 +143,8 @@ Every resume you upload is then also copied to a **"Job Tracker Resumes"** folde
 Locally, data is stored in `data/tracker.db` and resumes in `data/resumes/` (files you copy into that folder show up automatically). No password is needed, because only your own computer can reach it. Set `APP_PASSWORD` if you want one anyway. To use your Turso database locally, set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` before running.
 
 Keyboard shortcuts: `n` adds a job, `/` searches, `Esc` closes the side panel.
+
+Tests: `python3 -m unittest discover tests`. These cover sign-in, access requests, and that no user can reach another user's data.
 
 ## Notes
 - Resumes are limited to **4 MB** each, which is Vercel's upload limit.
@@ -129,7 +157,7 @@ Keyboard shortcuts: `n` adds a job, `/` searches, `Esc` closes the side panel.
 |---|---|
 | `server.py` | Web app + API (WSGI; Vercel runs `server:app`) |
 | `database.py` | Local SQLite or Turso, plus resume file storage |
-| `gdrive.py` | Google Drive OAuth + upload |
+| `gdrive.py` | Google sign-in, plus Drive OAuth + upload |
 | `ai.py` | AI providers (Anthropic + OpenAI-compatible), the assistant's prompt, and the AI resume review |
 | `scoring.py` | Resume score: keyword match with the job description and format checks (no AI) |
 | `mcp.py`, `mcp_bridge.py` | MCP server for Claude, and the Claude Desktop bridge |

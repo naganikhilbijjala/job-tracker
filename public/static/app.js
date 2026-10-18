@@ -91,12 +91,55 @@ const statusOptions = (cur) => state.meta.statuses
 
 // ------------------------------------------------------------ login
 
-function showLogin() {
+async function showLogin() {
   $("#app").hidden = true;
   $("#login").hidden = false;
   closeDrawer();
-  $("#login-form").password.focus();
+  try { state.meta = await api("/api/meta"); } catch {}
+  const { auth = {}, request } = state.meta;
+  $("#google-login").hidden = !auth.google || !!request;
+  // Single-user trackers just show the password box; with Google sign-in it's tucked away for the admin.
+  const pw = $("#password-login");
+  pw.hidden = !auth.password || !!request;
+  pw.open = !auth.google;
+  $("summary", pw).hidden = !auth.google;
+  const box = $("#access-request");
+  box.hidden = !request;
+  if (request) {
+    const who = esc(request.name || request.email);
+    box.innerHTML = request.status === "pending"
+      ? `<p><b>Thanks, ${who}.</b> Your request to join is waiting for approval.</p>
+         <label class="field">Add a message for the admin (optional)
+           <textarea id="request-note" rows="3" maxlength="500" placeholder="e.g. Hi! It's Sam from the data science meetup.">${esc(request.note)}</textarea></label>
+         <div class="row"><button id="save-note">Send message</button><span id="note-status" class="muted small"></span></div>
+         <p class="muted small">Once you're approved, <a href="/login/google">sign in again</a> to get in.</p>
+         <p class="small"><a href="#" id="other-account">Use a different Google account</a></p>`
+      : `<p>Your request to join (${esc(request.email)}) wasn't approved.</p>
+         <p class="small"><a href="#" id="other-account">Use a different Google account</a></p>`;
+  }
+  const err = new URLSearchParams(location.search).get("login_error");
+  if (err) {
+    $("#login-error").textContent = `Sign-in failed: ${err}`;
+    $("#login-error").hidden = false;
+    history.replaceState(null, "", "/");
+  }
+  if (!pw.hidden && pw.open) $("#login-form").password.focus();
 }
+
+$("#access-request").addEventListener("click", async (e) => {
+  try {
+    if (e.target.id === "save-note") {
+      await api("/api/access/note", { method: "POST", json: { note: $("#request-note").value } });
+      $("#note-status").textContent = "Sent ✓";
+    } else if (e.target.id === "other-account") {
+      e.preventDefault();
+      await api("/api/logout", { method: "POST" });
+      showLogin();
+    }
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
 
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -154,6 +197,7 @@ function render() {
   if (state.view === "board") renderBoard();
   else if (state.view === "table") renderTable();
   else if (state.view === "profile") loadProfile();
+  else if (state.view === "users") loadUsers();
   else renderResumes();
 }
 
@@ -245,7 +289,7 @@ function fmtSize(n) {
 function renderResumes() {
   const { drive, storage, resume_dir, origin } = state.meta;
   const hosted = storage === "database";
-  $("#storage-note").innerHTML = hosted
+  $("#storage-note").innerHTML = hosted || !resume_dir
     ? "Resumes are stored in your tracker's database. Connect Google Drive to also keep copies in a Drive folder."
     : `Files live in <code>${esc(resume_dir)}</code>. Anything you copy into that folder shows up here automatically.`;
   $("#resume-list").innerHTML = state.resumes.map((r) => {
@@ -294,10 +338,19 @@ function renderResumes() {
            ${credentialStep}
          </ol>`;
 
-  $("#connect-panel").innerHTML = `<h3>Browser extension</h3>
-    <p class="muted small">In the extension's setup, use this address${state.meta.auth.required ? " and your tracker password" : ""}:</p>
-    <code class="copy">${esc(origin)}</code>
-    ${state.meta.auth.required ? `<div class="row"><button id="logout">Log out</button></div>` : ""}`;
+  const user = state.meta.user;
+  $("#connect-panel").innerHTML = user
+    ? `<h3>Browser extension</h3>
+       <p class="muted small">In the extension's setup, use this address and a connection code:</p>
+       <code class="copy">${esc(origin)}</code>
+       <div id="ext-code" class="row"><button id="make-code">Get connection code</button></div>
+       <h3 style="margin-top:16px">Account</h3>
+       <p class="muted small">Signed in as ${esc(user.email)}</p>
+       <div class="row"><button id="logout">Log out</button></div>`
+    : `<h3>Browser extension</h3>
+       <p class="muted small">In the extension's setup, use this address${state.meta.auth.required ? " and your tracker password" : ""}:</p>
+       <code class="copy">${esc(origin)}</code>
+       ${state.meta.auth.required ? `<div class="row"><button id="logout">Log out</button></div>` : ""}`;
 }
 
 // ------------------------------------------------------------ drawer
@@ -565,6 +618,11 @@ $("#view-resumes").addEventListener("click", async (e) => {
     } else if (t.id === "logout") {
       await api("/api/logout", { method: "POST" });
       return showLogin();
+    } else if (t.id === "make-code") {
+      const { code } = await api("/api/extension-code", { method: "POST" });
+      $("#ext-code").outerHTML = `<code class="copy">${esc(code)}</code>
+        <p class="muted small">Paste it into the extension's password box. It works for a year; keep it private.</p>`;
+      return;
     } else {
       return;
     }
@@ -871,11 +929,89 @@ $("#assistant").addEventListener("click", async (e) => {
   }
 });
 
+// ------------------------------------------------------------ users (admin, multi-user mode)
+
+function setPendingBadge(n) {
+  $("#pending-badge").textContent = n;
+  $("#pending-badge").hidden = !n;
+}
+
+const fmtBytes = (n) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+async function loadUsers() {
+  let users;
+  try {
+    users = await api("/api/admin/users");
+  } catch (e) {
+    return toast(e.message, true);
+  }
+  const pending = users.filter((u) => u.status === "pending");
+  const others = users.filter((u) => u.status !== "pending");
+  setPendingBadge(pending.length);
+  const who = (u) => `<b>${esc(u.name || u.email)}</b>${u.name ? `<div class="muted small">${esc(u.email)}</div>` : ""}`;
+  $("#users-main").innerHTML = `
+    <h3>Access requests</h3>
+    ${pending.length ? pending.map((u) => `<div class="panel user-card">
+        <div>${who(u)}<div class="muted small">asked ${ago(u.created_at)}</div>
+          ${u.note ? `<p class="note">“${esc(u.note)}”</p>` : ""}</div>
+        <div class="row"><button class="primary" data-user="${u.id}" data-status="active">Approve</button>
+          <button data-user="${u.id}" data-status="blocked">Decline</button></div>
+      </div>`).join("") : `<p class="muted">No requests waiting. People who sign in with Google appear here.</p>`}
+    <h3>People</h3>
+    <div class="table-wrap"><table class="users-table">
+      <thead><tr><th>Name</th><th>Access</th><th>Jobs</th><th>Files</th><th>Last sign-in</th><th></th></tr></thead>
+      <tbody>${others.map((u) => `<tr>
+        <td>${who(u)}</td>
+        <td data-label="Access">${u.id === 1 ? "Admin (you)" : u.status === "active" ? (u.last_login ? "Active" : "Invited") : "Removed"}</td>
+        <td data-label="Jobs">${u.jobs}</td><td data-label="Files">${u.resume_bytes ? fmtBytes(u.resume_bytes) : "—"}</td>
+        <td data-label="Last sign-in">${u.last_login ? ago(u.last_login) : "—"}</td>
+        <td class="actions">${u.id === 1 ? "" : u.status === "active"
+          ? `<button data-user="${u.id}" data-status="blocked">Remove access</button>`
+          : `<button data-user="${u.id}" data-status="active">Restore</button>
+             <button class="danger" data-delete-user="${u.id}" data-email="${esc(u.email)}">Delete data</button>`}</td>
+      </tr>`).join("")}</tbody></table></div>`;
+  const bytes = users.reduce((n, u) => n + u.resume_bytes, 0);
+  $("#users-usage").innerHTML = `<h3>Usage</h3>
+    <p class="muted small">${users.filter((u) => u.status === "active").length} people with access ·
+      ${users.reduce((n, u) => n + u.jobs, 0)} jobs · ${fmtBytes(bytes)} of resume files.
+      Turso's free plan includes 5 GB.</p>`;
+}
+
+$("#view-users").addEventListener("click", async (e) => {
+  const t = e.target.closest("button");
+  if (!t) return;
+  try {
+    if (t.dataset.status) {
+      await api(`/api/admin/users/${t.dataset.user}`, { method: "PUT", json: { status: t.dataset.status } });
+    } else if (t.dataset.deleteUser) {
+      if (!confirm(`Delete ${t.dataset.email} and all their jobs, resumes and chats? This can't be undone.`)) return;
+      await api(`/api/admin/users/${t.dataset.deleteUser}`, { method: "DELETE" });
+    } else {
+      return;
+    }
+    loadUsers();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$("#invite-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/admin/users", { method: "POST", json: { email: e.target.email.value } });
+    toast(`Invited ${e.target.email.value}. Send them the link to this page.`);
+    e.target.reset();
+    loadUsers();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 // ------------------------------------------------------------ boot
 
 const params = new URLSearchParams(location.search);
 const hashView = location.hash.slice(1);
-if (["board", "table", "resumes", "profile"].includes(hashView)) state.view = hashView;
+if (["board", "table", "resumes", "profile", "users"].includes(hashView)) state.view = hashView;
 
 // Opened from the phone's Share menu (installed app) — pull the link out of whatever was shared.
 function sharedJob() {
@@ -889,6 +1025,10 @@ async function boot() {
   if (state.meta.auth.required && !state.meta.auth.ok) return showLogin();
   $("#login").hidden = true;
   $("#app").hidden = false;
+  const admin = !!state.meta.user?.is_admin;
+  $('.tabs [data-view="users"]').hidden = !admin;
+  setPendingBadge(state.meta.user?.pending || 0);
+  if (state.view === "users" && !admin) state.view = "board";
   await loadAll();
   if (params.get("drive") === "connected") toast("Google Drive connected");
   if (params.get("drive_error")) toast(`Google Drive: ${params.get("drive_error")}`, true);

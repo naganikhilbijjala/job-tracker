@@ -1,4 +1,4 @@
-"""Minimal Google Drive client (stdlib only) for backing up resumes.
+"""Minimal Google client (stdlib only): "Sign in with Google", and Drive backup of resumes.
 
 Uses the `drive.file` scope, so the app can only see files it created itself —
 it never gets access to the rest of your Drive. Tokens are kept in the app's
@@ -16,12 +16,14 @@ from pathlib import Path
 
 CLIENT_FILE = Path(__file__).resolve().parent / "data" / "client_secret.json"
 SCOPE = "https://www.googleapis.com/auth/drive.file"
+LOGIN_SCOPE = "openid email profile"
 FOLDER_NAME = "Job Tracker Resumes"
 
 AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 API = "https://www.googleapis.com/drive/v3/files"
 UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files"
+USERINFO = "https://openidconnect.googleapis.com/v1/userinfo"
 
 _lock = threading.Lock()
 
@@ -42,6 +44,10 @@ def _client():
     if "client_id" not in c:
         raise DriveError("data/client_secret.json doesn't look like a Google OAuth client file")
     return c["client_id"], c["client_secret"]
+
+
+def client_secret():
+    return _client()[1]
 
 
 def is_configured():
@@ -80,6 +86,28 @@ def auth_url(redirect_uri, state):
         "client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code",
         "scope": SCOPE, "access_type": "offline", "prompt": "consent", "state": state,
     })
+
+
+def login_url(redirect_uri, state):
+    """Google's account chooser, asking only for name and email."""
+    client_id, _ = _client()
+    return AUTH_URI + "?" + urllib.parse.urlencode({
+        "client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code",
+        "scope": LOGIN_SCOPE, "prompt": "select_account", "state": state,
+    })
+
+
+def signed_in_user(code, redirect_uri):
+    """Finish "Sign in with Google": returns {"email", "name"} for a verified Google account."""
+    client_id, secret = _client()
+    token = _post_form(TOKEN_URI, {
+        "code": code, "client_id": client_id, "client_secret": secret,
+        "redirect_uri": redirect_uri, "grant_type": "authorization_code",
+    })
+    info = _open(urllib.request.Request(USERINFO, headers={"Authorization": f"Bearer {token['access_token']}"}))
+    if not info.get("email") or not info.get("email_verified"):
+        raise DriveError("Google didn't confirm an email address for this account.")
+    return {"email": info["email"].strip().lower(), "name": (info.get("name") or "").strip()}
 
 
 def _save_token(db, token):

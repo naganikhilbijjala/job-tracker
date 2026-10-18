@@ -13,13 +13,24 @@
 </head>
 <body>
   <section id="login" class="login" hidden>
-    <form id="login-form" class="login-card">
+    <div class="login-card">
       <img src="/icon-192.png" alt="" width="56" height="56">
       <h1>Job Tracker</h1>
-      <label class="field">Password<input name="password" type="password" autocomplete="current-password" required autofocus></label>
-      <button type="submit" class="primary">Log in</button>
+      <div id="google-login" hidden>
+        <p class="muted">Track your job applications, save every job description, and tailor resumes with AI.</p>
+        <p class="muted small">It's invite-only. Sign in with Google to get in, or to ask for access.</p>
+        <a class="btn primary wide" href="/login/google">Sign in with Google</a>
+      </div>
+      <div id="access-request" hidden></div>
+      <details id="password-login" open>
+        <summary>Log in with the admin password</summary>
+        <form id="login-form">
+          <label class="field">Password<input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit" class="primary">Log in</button>
+        </form>
+      </details>
       <p id="login-error" class="error" hidden></p>
-    </form>
+    </div>
   </section>
 
   <div id="app" hidden>
@@ -30,6 +41,7 @@
         <button data-view="table">List</button>
         <button data-view="resumes">Resumes</button>
         <button data-view="profile">Profile</button>
+        <button data-view="users" hidden>Users <span id="pending-badge" class="badge" hidden></span></button>
       </nav>
       <input id="search" type="search" placeholder="Search company, title, notes…" autocomplete="off">
       <button id="add-job" class="primary" aria-label="Add job">+ <span class="label">Add job</span></button>
@@ -82,6 +94,22 @@
           <div class="side">
             <aside id="ai-panel" class="panel"></aside>
             <aside id="mcp-panel" class="panel"></aside>
+          </div>
+        </div>
+      </section>
+      <section id="view-users" class="view">
+        <div class="resume-grid">
+          <div id="users-main"></div>
+          <div class="side">
+            <aside class="panel">
+              <h3>Invite someone</h3>
+              <p class="muted small">They get straight in the first time they sign in with this Google account.</p>
+              <form id="invite-form" class="row">
+                <input name="email" type="email" placeholder="friend@gmail.com" required>
+                <button class="primary" type="submit">Invite</button>
+              </form>
+            </aside>
+            <aside id="users-usage" class="panel"></aside>
           </div>
         </div>
       </section>
