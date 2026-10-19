@@ -102,19 +102,21 @@ USER_SETTING_KEYS = ("profile", "ai_instructions", "ai_config", "mcp_token", "go
 OWNED_TABLES = ("jobs", "resumes", "generated_resumes")
 
 
+def _add_column(db, table, definition):
+    try:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+    except Exception as e:  # sqlite3 and Turso both say "duplicate column name"
+        if "duplicate column" not in str(e).lower():
+            raise
+
+
 def _migrate(db):
     """Bring a database from before multi-user up to date. Safe to run every start."""
     for table in OWNED_TABLES:
-        try:
-            db.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
-        except Exception as e:  # sqlite3 and Turso both say "duplicate column name"
-            if "duplicate column" not in str(e).lower():
-                raise
-    try:  # what the posting says about visa sponsorship (see sponsorship.py); NULL until checked
-        db.execute("ALTER TABLE jobs ADD COLUMN sponsorship TEXT")
-    except Exception as e:
-        if "duplicate column" not in str(e).lower():
-            raise
+        _add_column(db, table, "user_id INTEGER NOT NULL DEFAULT 1")
+    _add_column(db, "jobs", "sponsorship TEXT")  # what the posting says about visas (sponsorship.py); NULL = unchecked
+    _add_column(db, "chat_messages", "model TEXT")  # which provider and model wrote an assistant reply
+    _add_column(db, "generated_resumes", "model TEXT")  # …and which wrote a saved resume
     marks = ", ".join("?" * len(USER_SETTING_KEYS))
     db.run_many([
         *[(f"CREATE INDEX IF NOT EXISTS {t}_user ON {t}(user_id)", ()) for t in OWNED_TABLES],

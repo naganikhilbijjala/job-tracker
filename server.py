@@ -1561,7 +1561,7 @@ def assistant_prompt(db, job):
 def chat_history(req, job_id):
     db, _ = backend()
     find_job(db, job_id)
-    return json_response(db.query("SELECT id, role, content, created_at FROM chat_messages "
+    return json_response(db.query("SELECT id, role, content, created_at, model FROM chat_messages "
                                   "WHERE job_id = ? ORDER BY id", (job_id,)))
 
 
@@ -1575,18 +1575,51 @@ def chat_send(req, job_id):
     history = db.query("SELECT role, content FROM chat_messages WHERE job_id = ? ORDER BY id", (job_id,))[-20:]
     while history and history[0]["role"] != "user":  # conversations must open with the user
         history.pop(0)
-    try:
-        reply = ai.complete(ai_config(db), assistant_prompt(db, job), [*history, {"role": "user", "content": text}])
-    except ai.AIError as e:
-        raise ApiError(400, str(e)) from None
+    reply, model = ask_assistant(db, job, [*history, {"role": "user", "content": text}],
+                                 about_resume=bool(RESUME_REQUEST.search(text)))
     at = now()
-    db.run_many([
+    _, (_, reply_id) = db.run_many([
         ("INSERT INTO chat_messages (job_id, role, content, created_at) VALUES (?, 'user', ?, ?)", (job_id, text, at)),
-        ("INSERT INTO chat_messages (job_id, role, content, created_at) VALUES (?, 'assistant', ?, ?)", (job_id, reply, now())),
+        ("INSERT INTO chat_messages (job_id, role, content, created_at, model) VALUES (?, 'assistant', ?, ?, ?)",
+         (job_id, reply, now(), model)),
     ])
     return json_response({"user": {"role": "user", "content": text, "created_at": at},
-                          "assistant": {"role": "assistant", "content": reply, "created_at": now()},
+                          "assistant": {"id": reply_id, "role": "assistant", "content": reply, "created_at": now(),
+                                        "model": model},
                           "backup": ai.answered_by_backup()})
+
+
+RESUME_REQUEST = re.compile(r"\b(?:resume|résumé|cv)\b", re.I)
+RESUME_RETRY_MIN_TIME = 90  # seconds that must be left (of Vercel's 300) to ask for a corrected resume
+
+
+def ask_assistant(db, job, messages, about_resume):
+    """The assistant's reply and which model wrote it. For resumes: only the main provider writes them
+    (so they come out consistent), and a resume that fails the checks is sent back once to be fixed."""
+    started = time.monotonic()
+    config, system = ai_config(db), assistant_prompt(db, job)
+    try:
+        reply = ai.complete(config, system, messages, allow_backup=not about_resume)
+    except ai.AIError as e:
+        hint = (f" Resumes are only written by your main AI provider, so they come out consistent; your backup "
+                f"is used for everything else. Try again in a minute.") if about_resume and config.get("fallback") else ""
+        raise ApiError(400, str(e) + hint) from None
+    model = ai.answered_with()
+    problems = ai.resume_problems(reply, job["company"])
+    left = 280 - (time.monotonic() - started)
+    if problems and left > RESUME_RETRY_MIN_TIME:
+        fix = ("Before I use this resume, fix these problems:\n" + "\n".join(f"- {p}" for p in problems)
+               + "\n\nReply with the complete corrected resume in one ```resume block, closed with ```, holding "
+                 "nothing but the resume. Change nothing else. Put any notes after the block.")
+        try:
+            fixed = ai.complete(config, system, [*messages, {"role": "assistant", "content": reply},
+                                                 {"role": "user", "content": fix}],
+                                allow_backup=False, budget=left - 30)
+        except ai.AIError:
+            fixed = ""  # keep the first answer; the resume is still cleaned when it's saved
+        if "```resume" in fixed and len(ai.resume_problems(fixed, job["company"])) < len(problems):
+            reply, model = fixed, ai.answered_with()
+    return reply, model
 
 
 @route("DELETE", r"/api/jobs/(\d+)/chat")
@@ -1597,7 +1630,7 @@ def chat_clear(req, job_id):
     return json_response({"ok": True})
 
 
-def save_generated(db, job_id, content, title="", source="app"):
+def save_generated(db, job_id, content, title="", source="app", model=""):
     job = find_job(db, job_id) if job_id else None
     content = ai.clean_resume(content, job["company"] if job else "")  # only the resume, no AI notes
     if not content:
@@ -1606,15 +1639,15 @@ def save_generated(db, job_id, content, title="", source="app"):
         name = re.match(r"#\s+(.+)", content)
         parts = [name.group(1).strip() if name else "Resume", job["company"] if job else "", today()]
         title = " - ".join(p for p in parts if p)
-    return db.execute("INSERT INTO generated_resumes (user_id, job_id, title, content, source, created_at) "
-                      "VALUES (?, ?, ?, ?, ?, ?)", (db.uid, job_id, title, content, source, now()))
+    return db.execute("INSERT INTO generated_resumes (user_id, job_id, title, content, source, created_at, model) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?)", (db.uid, job_id, title, content, source, now(), model or None))
 
 
 @route("GET", r"/api/generated")
 def generated_list(req):
     db, _ = backend()
     job_id = req.query.get("job_id")
-    sql = ("SELECT g.id, g.job_id, g.title, g.source, g.created_at, j.company, j.title AS job_title "
+    sql = ("SELECT g.id, g.job_id, g.title, g.source, g.model, g.created_at, j.company, j.title AS job_title "
            "FROM generated_resumes g LEFT JOIN jobs j ON j.id = g.job_id AND j.user_id = g.user_id "
            "WHERE g.user_id = ?")
     if not job_id:
@@ -1631,7 +1664,12 @@ def generated_list(req):
 def generated_create(req, job_id):
     db, _ = backend()
     data = req.json()
-    gid = save_generated(db, int(job_id), data.get("content", ""), str(data.get("title", "")).strip())
+    find_job(db, job_id)
+    # Saved from an assistant reply: remember which model wrote it (the reply is this job's, so it's yours).
+    rows = db.query("SELECT model FROM chat_messages WHERE id = ? AND job_id = ? AND role = 'assistant'",
+                    (data.get("message_id"), job_id)) if data.get("message_id") else []
+    gid = save_generated(db, int(job_id), data.get("content", ""), str(data.get("title", "")).strip(),
+                         model=rows[0]["model"] if rows else "")
     return json_response({"id": gid, "url": f"/resume/{gid}"}, 201)
 
 
@@ -1831,7 +1869,7 @@ def mcp_tools(db, origin):
 
     def save_tailored_resume(job_id, content, title=""):
         try:
-            gid = save_generated(db, int(job_id), content, title, source="claude")
+            gid = save_generated(db, int(job_id), content, title, source="claude", model="Claude (over MCP)")
         except ApiError as e:
             raise mcp.ToolError(e.message) from None
         return {"id": gid, "open_to_print_as_pdf": f"{origin}/resume/{gid}", "check": check_summary(gid)}

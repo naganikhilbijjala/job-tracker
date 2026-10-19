@@ -496,6 +496,77 @@ class MultiUserTest(unittest.TestCase):
         self.assertIn(b"Built it", text)  # the page text really is in there…
         self.assertNotIn(b"emphasizes", text)  # …and the note isn't
 
+    def test_resume_generation_checks_retries_and_records_the_model(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        replies = {}  # path -> list of (status, text); the last one repeats
+        calls = {}
+
+        class FakeAI(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                name = self.path.split("/")[1]
+                calls[name] = calls.get(name, 0) + 1
+                status, text = replies[name][min(calls[name], len(replies[name])) - 1]
+                body = json.dumps({"choices": [{"message": {"content": text}, "finish_reason": "stop"}]} if status == 200
+                                  else {"error": {"message": "overloaded"}}).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        fake = ThreadingHTTPServer(("127.0.0.1", 0), FakeAI)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+        self.addCleanup(fake.server_close)
+        self.addCleanup(fake.shutdown)
+        base = f"http://127.0.0.1:{fake.server_port}"
+        saved = server.ai.RETRY_WAITS
+        server.ai.RETRY_WAITS = (0.01, 0.01)
+        self.addCleanup(setattr, server.ai, "RETRY_WAITS", saved)
+
+        c = Client()
+        c.sign_in("resume-model@example.com")
+        c.call("PUT", "/api/ai", {"provider": "openai", "api_key": "sk-main-123456", "model": "main-model",
+                                  "base_url": f"{base}/main"})
+        c.call("PUT", "/api/ai", {"provider": "groq", "api_key": "gsk-backup-123456", "model": "backup-model",
+                                  "base_url": f"{base}/backup", "as_backup": True})
+        job = c.call("POST", "/api/jobs", {"company": "Haystack", "title": "Engineer"})["json"]["id"]
+        good = ("# Sam Lee\nNYC | 555-123-4567 | sam@example.com\n\n## Summary\nBackend engineer.\n\n"
+                "## Experience\n### Acme | NYC\n**Engineer** | Jan 2020 – Present\n- Built it\n\n"
+                "## Education\n### NYU | NYC\n**BS, CS** | May 2019\n\n## Skills\n- **Languages:** Python")
+        messy = good.replace("Backend engineer.", "Backend engineer. Seeking to join Haystack.") \
+            + "\n\nThe resume emphasizes your Python work."
+        # A messy resume is sent back once, and the corrected one is what you get.
+        replies.update(main=[(200, f"```resume\n{messy}\n```"), (200, f"```resume\n{good}\n```\nDone.")])
+        res = c.call("POST", f"/api/jobs/{job}/chat", {"message": "Write my resume for this job"})["json"]
+        self.assertEqual(calls["main"], 2)
+        self.assertNotIn("Seeking", res["assistant"]["content"])
+        self.assertEqual(res["assistant"]["model"], "OpenAI · main-model")
+        self.assertEqual(c.call("GET", f"/api/jobs/{job}/chat")["json"][-1]["model"], "OpenAI · main-model")
+        # Saving it from the chat records the model on the resume.
+        gid = c.call("POST", f"/api/jobs/{job}/generated", {"content": good, "message_id": res["assistant"]["id"]})["json"]["id"]
+        self.assertEqual(c.call("GET", f"/api/generated/{gid}")["json"]["model"], "OpenAI · main-model")
+        self.assertEqual(c.call("GET", f"/api/generated?job_id={job}")["json"][0]["model"], "OpenAI · main-model")
+        # A good resume isn't sent back.
+        calls.clear()
+        replies.update(main=[(200, f"```resume\n{good}\n```")])
+        c.call("POST", f"/api/jobs/{job}/chat", {"message": "Tailor my resume"})
+        self.assertEqual(calls["main"], 1)
+        # Resumes never come from the backup; other questions still do.
+        calls.clear()
+        replies.update(main=[(503, "")], backup=[(200, "Backup answer")])
+        res = c.call("POST", f"/api/jobs/{job}/chat", {"message": "Write my resume"})
+        self.assertEqual(res["status"], 400)
+        self.assertIn("only written by your main AI provider", res["json"]["error"])
+        self.assertNotIn("backup", calls)
+        res = c.call("POST", f"/api/jobs/{job}/chat", {"message": "Why do I want to work here?"})["json"]
+        self.assertEqual((res["assistant"]["content"], res["backup"]), ("Backup answer", "Groq"))
+        self.assertEqual(res["assistant"]["model"], "Groq · backup-model")
+
     def test_forged_or_anonymous_requests(self):
         self.assertEqual(Client().call("GET", "/api/jobs")["status"], 401)
         forged = Client()

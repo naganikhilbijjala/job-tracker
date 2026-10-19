@@ -1232,7 +1232,8 @@ function messageHTML(m, i) {
          <button type="button" data-copy="${i}" data-part="${j}">Copy</button></div></div>`
     : renderMarkdown(part)).join("");
   return `<div class="msg assistant">${html}
-    <div class="msg-actions"><button type="button" data-copy="${i}">Copy</button></div></div>`;
+    <div class="msg-actions">${m.model ? `<span class="muted small" title="The AI that wrote this">${esc(m.model)}</span>` : ""}
+      <button type="button" data-copy="${i}">Copy</button></div></div>`;
 }
 
 let chat = [];
@@ -1261,7 +1262,7 @@ async function loadAssistant() {
       ? `<div class="tailored"><b>Tailored resumes</b>${tailored.map((t) =>
           `<div class="row"><a href="/resume/${t.id}" target="_blank" rel="noopener">${esc(t.title)}</a>
            ${t.score != null ? `<span class="score-pill ${t.score >= 75 ? "good" : t.score >= 50 ? "warn" : "bad"}" title="Keyword and format score">${t.score}</span>` : ""}
-           <span class="muted small">${t.source === "claude" ? "from Claude · " : ""}${ago(t.created_at)}</span>
+           <span class="muted small" title="${esc(t.model ? `Written by ${t.model}` : "")}">${t.model ? `${esc(t.model.split(" · ").pop())} · ` : t.source === "claude" ? "from Claude · " : ""}${ago(t.created_at)}</span>
            <a class="small" href="/api/generated/${t.id}/pdf" title="Download as a one-page PDF">PDF ↓</a>
            <button type="button" class="icon small danger" data-delete-tailored="${t.id}" title="Delete">✕</button></div>`).join("")}</div>`
       : "";
@@ -1323,7 +1324,8 @@ $("#assistant").addEventListener("click", async (e) => {
     } else if (t.dataset.saveResume !== undefined) {
       const win = window.open("", "_blank");  // open now, while the click still counts (popup blockers)
       const { url } = await api(`/api/jobs/${state.editingId}/generated`, {
-        method: "POST", json: { content: resumePart(Number(t.dataset.saveResume), Number(t.dataset.part)) } });
+        method: "POST", json: { content: resumePart(Number(t.dataset.saveResume), Number(t.dataset.part)),
+                                message_id: chat[Number(t.dataset.saveResume)].id } });
       if (win) win.location = url; else location.href = url;
       loadAssistant();
     } else if (t.dataset.deleteTailored) {

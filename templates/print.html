@@ -33,6 +33,7 @@
       padding: 10px 16px; background: var(--bar-bg); border-bottom: 1px solid var(--bar-border); color: var(--bar-ink);
     }
     .toolbar .title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .toolbar .title .by { font-weight: 400; opacity: .65; font-size: 13px; }
     .toolbar .hint { font-size: 12px; opacity: .7; flex-basis: 100%; }
     @media (max-width: 640px) { .toolbar .title { flex-basis: 100%; } }
     .toolbar label { font-size: 13px; display: flex; align-items: center; gap: 6px; }
@@ -166,7 +167,7 @@
     <aside id="panel" hidden aria-label="Resume score"></aside>
   </div>
   <div id="measure" class="resume"></div>
-  <script src="/static/markdown.js?v=3"></script>
+  <script src="/static/markdown.js?v=4"></script>
   <script>
     "use strict";
     const id = location.pathname.split("/").filter(Boolean).pop();
@@ -284,6 +285,12 @@
       if (!res.ok) throw new Error(doc.error || res.statusText);
       document.title = (doc.file_name || doc.title).replace(/\.pdf$/, "");  // Chrome names a printed PDF after this
       document.getElementById("doc-title").textContent = doc.title;
+      if (doc.model) {  // which AI wrote it; resumes vary a lot between models
+        const by = document.createElement("span");
+        by.className = "by";
+        by.textContent = ` · written by ${doc.model}`;
+        document.getElementById("doc-title").append(by);
+      }
       resume.innerHTML = renderResume(doc.content);
       // A size picked for one resume stays with that resume; every new one starts on Auto-fit.
       try { sizeSelect.value = localStorage.getItem(sizeKey) || "auto"; localStorage.removeItem("resume-size"); } catch {}

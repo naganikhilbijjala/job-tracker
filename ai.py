@@ -11,6 +11,8 @@ import time
 import urllib.error
 import urllib.request
 
+import scoring
+
 # keys_url: where to create a key, linked from the settings panel.
 PROVIDERS = {
     "anthropic": {"label": "Anthropic (Claude)", "base_url": "https://api.anthropic.com", "model": "claude-opus-5-5",
@@ -52,6 +54,11 @@ _answered = threading.local()
 def answered_by_backup():
     """The backup provider's name if it answered the last complete() on this thread, else ""."""
     return getattr(_answered, "backup", "")
+
+
+def answered_with():
+    """Which provider and model wrote the last complete() reply on this thread, e.g. "Groq · gpt-oss-120b"."""
+    return getattr(_answered, "model", "")
 
 
 def _error_message(raw):
@@ -205,22 +212,23 @@ def _attempts(config, system, messages, max_tokens, deadline, tries):
             time.sleep(wait)
 
 
-def complete(config, system, messages, max_tokens=16000):
+def complete(config, system, messages, max_tokens=16000, allow_backup=True, budget=TOTAL_BUDGET):
     """Send a conversation (list of {role, content}) and return the reply text.
 
-    If config has a "fallback" (another provider's settings) and the chosen provider fails,
-    the fallback answers instead; answered_by_backup() then names it."""
-    _answered.backup = ""
+    If config has a "fallback" (another provider's settings), allow_backup is on and the chosen
+    provider fails, the fallback answers instead; answered_by_backup() then names it.
+    answered_with() names the provider and model that answered."""
+    _answered.backup = _answered.model = ""
     if not config or not config.get("api_key"):
         raise AIError("Add an AI provider and API key on the Profile tab first.")
     if not config.get("model"):
         raise AIError("Choose a model on the Profile tab first.")
-    deadline = time.monotonic() + TOTAL_BUDGET
+    deadline = time.monotonic() + budget
     try:
-        return _attempts(config, system, messages, max_tokens, deadline, tries=3)
+        text = _attempts(config, system, messages, max_tokens, deadline, tries=3)
     except AIError as first:
         backup = config.get("fallback") or {}
-        if first.final or not (backup.get("api_key") and backup.get("model")) \
+        if first.final or not allow_backup or not (backup.get("api_key") and backup.get("model")) \
                 or deadline - time.monotonic() < BACKUP_MIN_TIME:
             raise
         try:
@@ -228,7 +236,10 @@ def complete(config, system, messages, max_tokens=16000):
         except AIError as second:
             raise AIError(f"{_label(config)}: {first}\nBackup ({_label(backup)}): {second}") from None
         _answered.backup = _label(backup)
+        _answered.model = f"{_label(backup)} · {backup['model']}"
         return text
+    _answered.model = f"{_label(config)} · {config['model']}"
+    return text
 
 
 # The layout the tracker's resume page renders (dates right-aligned, bold skill labels…).
@@ -329,6 +340,30 @@ def clean_resume(text, company=""):
         lines.pop()
     lines = _clean_summary(lines, company)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+_RESUME_BLOCK = re.compile(r"```resume[^\n]*\n([\s\S]*?)(```|$)")
+
+
+def resume_problems(reply, company=""):
+    """What's wrong with the resume in an assistant reply, as instructions a model can act on.
+    Empty if the reply has no ```resume block, or the resume is fine. Same checks for every model."""
+    found = _RESUME_BLOCK.search(reply or "")
+    if not found:
+        return []
+    body, closed = found.group(1), bool(found.group(2))
+    problems = [] if closed else ["The ```resume block isn't closed. End it with ``` on its own line."]
+    cleaned = clean_resume(body, company)
+    norm = lambda l: re.sub("[\u2010\u2011\u2012]", "-", l).replace("\u00a0", " ").strip()
+    kept = {norm(l) for l in cleaned.split("\n")}
+    for line in body.split("\n"):
+        if norm(line) and norm(line) not in kept and not line.lstrip().startswith("```"):
+            problems.append(f'Not resume content, so it must not be inside the block (a note about the resume, a goal '
+                            f'statement, or the target company named in the summary): "{norm(line)[:160]}"')
+    for check in scoring.format_report(cleaned)["checks"]:
+        if check["status"] == "fail":
+            problems.append(f"{check['label']}: {check['detail']}")
+    return problems
 
 
 SYSTEM_PROMPT = """You are a job-application assistant working for one candidate. You help them \
