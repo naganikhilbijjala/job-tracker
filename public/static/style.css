@@ -525,3 +525,6 @@ code.copy.pre { white-space: pre; overflow-x: auto; word-break: normal; font-siz
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.backup-box { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.backup-box p { margin: 4px 0 0; }

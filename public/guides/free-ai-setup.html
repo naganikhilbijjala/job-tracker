@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Set up free AI · ApplyStack Guides</title>
+  <meta name="description" content="Connect ApplyStack to a free AI provider in about five minutes: a Google Gemini key, plus a free Groq key as a backup for when Gemini is busy.">
+  <meta name="theme-color" content="#2f6fed">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/landing.css">
+</head>
+<body>
+  <div class="lp">
+    <header class="lp-nav">
+      <a class="lp-logo" href="/"><img src="/logo.svg" alt="" width="28" height="28">ApplyStack</a>
+      <nav>
+        <a href="/guides/">Guides</a>
+        <a class="lp-btn lp-btn-sm" href="/">Open the app</a>
+      </nav>
+    </header>
+
+    <main class="doc">
+      <h1>Set up free AI in ApplyStack</h1>
+      <p class="lede">About five minutes, no credit card: a free Google Gemini key for everyday use, and a free
+        Groq key as a backup for when Gemini is busy.</p>
+      <p class="meta">Updated October 2026 · Free limits change often, so check each provider's page.</p>
+
+      <nav class="toc" aria-label="On this page"><b>On this page</b>
+        <ol>
+          <li><a href="#why">What the AI does, and why you bring a key</a></li>
+          <li><a href="#gemini">Get a free Gemini key</a></li>
+          <li><a href="#connect">Connect it to ApplyStack</a></li>
+          <li><a href="#backup">Add Groq as a backup</a></li>
+          <li><a href="#options">Other providers</a></li>
+          <li><a href="#trouble">If something goes wrong</a></li>
+          <li><a href="#privacy">Privacy</a></li>
+        </ol>
+      </nav>
+
+      <h2 id="why">What the AI does, and why you bring a key</h2>
+      <p>ApplyStack itself is free. Its AI features run on an AI provider of your choice, using your own API key
+        (a password-like code that lets the app use your account with that provider). You need a key for:</p>
+      <ul>
+        <li>Resumes tailored to each job, from your Profile, and the fact check that catches anything your profile
+          doesn't back up</li>
+        <li>Answers for application forms, cover letters and "Why this company?"</li>
+        <li>Filling in application forms from the browser extension</li>
+      </ul>
+      <p>Everything else, like the board, saving jobs, the resume keyword score and the visa-sponsorship check,
+        works without a key.</p>
+      <div class="callout"><b>Why a backup?</b> Free plans get the lowest priority, so at busy times a provider
+        sometimes answers "overloaded". ApplyStack retries for a few seconds and, if you've added a backup, switches
+        to it instead of failing. It never keeps retrying for long: within about a minute you get an answer or a
+        clear error.</div>
+
+      <h2 id="gemini">Step 1: Get a free Gemini key</h2>
+      <ol class="steps">
+        <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio → API keys</a>
+          and sign in with your Google account.</li>
+        <li>Tap <span class="kbd">Create API key</span>. If it asks for a project, let it create one.</li>
+        <li>Copy the key. It's a long code that starts with <code>AIza</code>.</li>
+      </ol>
+      <p>Treat the key like a password: don't post it or share it.</p>
+
+      <h2 id="connect">Step 2: Connect it to ApplyStack</h2>
+      <ol class="steps">
+        <li>In ApplyStack, open the <b>Profile</b> tab and find the <b>AI provider</b> box.</li>
+        <li>Set <b>Provider</b> to <b>Google Gemini</b>.</li>
+        <li>Paste the key into <b>API key</b>. The model list fills in by itself.</li>
+        <li>Pick a <b>Model</b> with <b>flash</b> in its name. <b>Flash-Lite</b> models are often less busy, and
+          they're plenty for resumes and form answers.</li>
+        <li>Tap <span class="kbd">Save</span>, then <span class="kbd">Test</span>. You should see
+          "Connected ✓".</li>
+      </ol>
+      <p>While you're on the Profile tab, paste your full resume into <b>Your profile</b>. The AI only uses facts
+        from there, so the more complete it is, the better your tailored resumes.</p>
+
+      <h2 id="backup">Step 3: Add Groq as a backup</h2>
+      <p><a href="https://groq.com" target="_blank" rel="noopener">Groq</a> has a free plan that's very fast,
+        which makes it a good fallback for when Gemini is busy.</p>
+      <ol class="steps">
+        <li>Open <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a>
+          and sign up (Google sign-in works).</li>
+        <li>Tap <span class="kbd">Create API Key</span>, give it any name, and copy it. It starts with
+          <code>gsk_</code>.</li>
+        <li>Back in ApplyStack's <b>AI provider</b> box, set <b>Provider</b> to <b>Groq</b> and paste the key.</li>
+        <li>Pick the largest general model in the list. Model names usually include their size, like
+          <i>120b</i> or <i>70b</i>; skip ones for speech, vision or safety.</li>
+        <li>Tap <span class="kbd">Save as backup</span>, <b>not</b> Save. Gemini stays your main provider, and the
+          box shows <b>Backup when it's busy: Groq</b>.</li>
+        <li>Tap <span class="kbd">Test</span>. It checks both and should say the backup works too.</li>
+      </ol>
+      <div class="callout"><b>Tip:</b> when the backup answers, ApplyStack tells you ("Your main AI provider was
+        busy, so Groq answered"). You can change or remove the backup any time in the same box.</div>
+
+      <h2 id="options">Other providers</h2>
+      <p>Any of these work in ApplyStack. Free limits are approximate as of October 2026, and providers change
+        them often.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Provider</th><th>Cost</th><th>Good to know</th></tr></thead>
+          <tbody>
+            <tr><td><b>Google Gemini</b></td><td>Free plan</td><td>Good quality for free. Daily caps; at busy
+              times it can answer "overloaded". Our recommended main provider.</td></tr>
+            <tr><td><b>Groq</b></td><td>Free plan</td><td>Very fast. Around 30 requests a minute and roughly 1,000
+              a day per model. Our recommended backup.</td></tr>
+            <tr><td><b>OpenRouter</b></td><td>Free models</td><td>Many models in one place. Free ones (names ending
+              in <code>:free</code>) are limited to about 50 requests a day, and the list changes.</td></tr>
+            <tr><td><b>Anthropic (Claude)</b>, <b>OpenAI</b></td><td>Pay as you go</td><td>The most reliable, and
+              the best writing. A tailored resume typically costs a few cents.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="trouble">If something goes wrong</h2>
+      <h3>"The provider is overloaded right now"</h3>
+      <p>The provider's servers are busy; it's not your key. ApplyStack already retried a few times. Add a backup
+        (Step 3), or try again in a few minutes.</p>
+      <h3>"Rate limited or out of free quota"</h3>
+      <p>You've used up the free requests for now. Per-minute limits clear within a minute; daily limits reset the
+        next day. A backup keeps you going meanwhile.</p>
+      <h3>"The provider rejected the API key"</h3>
+      <p>The key was copied incompletely, deleted, or belongs to a different provider than the one selected. Copy
+        it again (no spaces before or after) and make sure the <b>Provider</b> matches.</p>
+      <h3>"Choose a model" or an empty model list</h3>
+      <p>The model list only loads once the key works. Re-paste the key, then pick a model. You can also type a
+        model name from the provider's website.</p>
+      <h3>Both main and backup failed</h3>
+      <p>The message shows what each one said. Usually both free plans hit their limits at once; wait a little, or
+        add a third provider as the backup instead.</p>
+
+      <h2 id="privacy">Privacy</h2>
+      <ul>
+        <li>Your key is stored in this ApplyStack's database and is never sent back to your browser. The person who
+          runs this ApplyStack can technically see it (see the <a href="/privacy.html">privacy policy</a>).</li>
+        <li>When you use an AI feature, the text it needs, like the job description and your profile, goes to the
+          provider you picked.</li>
+        <li>On free plans, some providers may use what you send to improve their products. Check their terms; if
+          that matters to you, use a paid plan.</li>
+      </ul>
+
+      <p class="cta"><a class="lp-btn" href="/">Open ApplyStack</a></p>
+    </main>
+
+    <footer class="lp-foot">
+      <span>ApplyStack · <a href="/guides/">Guides</a> · <a href="https://github.com/naganikhilbijjala/job-tracker" target="_blank" rel="noopener">Open source on GitHub</a> · <a href="/privacy.html">Privacy</a></span>
+    </footer>
+  </div>
+</body>
+</html>

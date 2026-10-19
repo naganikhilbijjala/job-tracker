@@ -277,7 +277,7 @@
 @media (max-width: 600px) {
   .lp-nav { padding: 12px 16px; }
   .lp-nav nav { gap: 14px; }
-  .lp-nav nav a[href="#features"] { display: none; }
+  .lp-nav nav a[href="#features"], .lp-nav nav a[href*="github.com"] { display: none; }
   .lp-hero, .lp-feature, .lp-grid-wrap, .lp-foot { padding-left: 16px; padding-right: 16px; }
   .lp-lede { font-size: 16.5px; }
   .lp-ctas .lp-btn { flex: 1 1 100%; }
@@ -299,3 +299,42 @@
   .lp-final { margin-left: 16px; margin-right: 16px; padding: 40px 20px; }
   .float { font-size: 12px; padding: 8px 11px; }
 }
+
+/* Guides: long-form pages outside the app (public/guides/) */
+.doc { max-width: 740px; margin: 0 auto; padding: 8px 24px 72px; font-size: 16.5px; line-height: 1.7; }
+.doc h1 { font-size: clamp(30px, 4.2vw, 40px); line-height: 1.12; margin: 28px 0 10px; }
+.doc .lede { color: var(--muted); font-size: 18px; margin: 0 0 8px; }
+.doc .meta { color: var(--muted); font-size: 13px; margin: 0 0 28px; }
+.doc h2 { font-size: 23px; margin: 44px 0 10px; }
+.doc h3 { font-size: 17px; margin: 26px 0 6px; }
+.doc a:not(.lp-btn) { color: var(--accent); }
+.doc li { margin: 6px 0; }
+.doc ol.steps { padding-left: 22px; }
+.doc ol.steps > li { padding-left: 4px; margin: 10px 0; }
+.doc code { font-size: 14px; }
+.doc .kbd { display: inline-block; padding: 0 7px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px;
+  background: var(--surface); font-size: 14px; font-weight: 600; white-space: nowrap; }
+.doc .callout { margin: 18px 0; padding: 14px 16px; border-radius: 12px; background: var(--lp-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border)); font-size: 15.5px; }
+.doc .callout b:first-child { color: var(--accent); }
+.doc .callout.warn { background: var(--warn-bg); border-color: transparent; }
+.doc .callout.warn b:first-child { color: var(--warn); }
+.doc .table-scroll { overflow-x: auto; margin: 14px 0; }
+.doc table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+.doc th, .doc td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--border);
+  white-space: normal; }  /* the app's tables don't wrap; prose tables should */
+.doc td:first-child { min-width: 104px; }
+.doc th { color: var(--muted); font-size: 13px; font-weight: 600; cursor: default; }
+.doc th:hover { color: var(--muted); }
+.doc .toc { padding: 14px 18px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); font-size: 15px; }
+.doc .toc ol { margin: 6px 0 0; padding-left: 20px; }
+.doc .toc li { margin: 2px 0; }
+.doc .cta { margin: 36px 0 0; text-align: center; }
+.guide-list { display: grid; gap: 14px; margin: 26px 0 0; }
+.guide-card { display: block; padding: 20px 22px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border);
+  text-decoration: none; color: inherit !important; transition: transform .2s ease, box-shadow .2s ease; }
+.guide-card:hover { transform: translateY(-2px); box-shadow: var(--lp-shadow); }
+.guide-card h2 { font-size: 19px; margin: 6px 0 6px; }
+.guide-card p { margin: 0; color: var(--muted); font-size: 15px; }
+.guide-card .tag { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+@media (max-width: 600px) { .doc { padding-left: 16px; padding-right: 16px; font-size: 16px; } }

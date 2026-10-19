@@ -940,9 +940,25 @@ function renderAiPanel(config) {
         </div>
         <span id="model-status" class="muted small"></span>
       </label>
-      <div class="row"><button type="submit" class="primary">Save</button><button type="button" id="ai-test">Test</button></div>
-    </form>`;
+      <div class="row"><button type="submit" class="primary">Save</button><button type="button" id="ai-test">Test</button>
+        <button type="button" id="save-backup" title="Keep your main provider, and use this one when it's busy">Save as backup</button></div>
+    </form>
+    <div class="backup-box">
+      <label class="field">Backup when it's busy
+        <select id="backup-select">${backupOptions(config)}</select></label>
+      <p class="muted small">Free AI plans are sometimes overloaded. With a backup, a busy provider is retried
+        briefly, then your backup answers instead. To add one, pick another provider above, paste its key and tap
+        <b>Save as backup</b>. <a href="/guides/free-ai-setup.html" target="_blank" rel="noopener">Free setup guide ↗</a></p>
+    </div>`;
   applyProvider(config.provider);
+}
+
+// Providers with a saved key, other than the main one, can be the backup.
+function backupOptions(config) {
+  const choices = Object.entries(config.saved || {})
+    .filter(([p, c]) => c.has_key && p !== config.provider && aiProviders[p])
+    .map(([p]) => `<option value="${p}" ${p === config.backup ? "selected" : ""}>${esc(aiProviders[p].label)}</option>`);
+  return `<option value="">${choices.length ? "No backup" : "No backup (save a second key first)"}</option>` + choices.join("");
 }
 
 // Fill the form with what's saved for this provider, then load its models if there's a key.
@@ -1022,10 +1038,11 @@ async function loadModels() {
   }
 }
 
-async function saveAi() {
-  const data = { ...Object.fromEntries(new FormData($("#ai-form"))), api_key: typedKey() };
+async function saveAi(asBackup = false) {
+  const data = { ...Object.fromEntries(new FormData($("#ai-form"))), api_key: typedKey(), as_backup: asBackup };
   const { config } = await api("/api/ai", { method: "PUT", json: data });
   renderAiPanel(config);
+  return config;
 }
 
 // Answers for application forms, saved from the browser extension ("Remember my answers").
@@ -1113,6 +1130,11 @@ document.addEventListener("change", (e) => {
     if (e.target.name === "provider") applyProvider(e.target.value);
     if (e.target.name === "api_key" || e.target.name === "base_url") loadModels();
   }
+  if (e.target.id === "backup-select") {
+    api("/api/ai/backup", { method: "PUT", json: { provider: e.target.value } })
+      .then(({ config }) => { renderAiPanel(config); toast(config.backup ? `Backup: ${aiProviders[config.backup].label}` : "No backup"); })
+      .catch((err) => toast(err.message, true));
+  }
   if (e.target.id === "model-select") {
     const input = $("#ai-form").model;
     const other = e.target.value === "__other";
@@ -1133,8 +1155,23 @@ $("#view-profile").addEventListener("click", async (e) => {
       e.target.disabled = true;
       e.target.textContent = "Testing…";
       await saveAi();
-      const { reply } = await api("/api/ai/test", { method: "POST" });
-      toast(`Connected ✓ — the model replied “${reply}”`);
+      const res = await api("/api/ai/test", { method: "POST" });
+      const main = aiProviders[aiConfig.provider].label;
+      const backup = aiConfig.backup && aiProviders[aiConfig.backup].label;
+      if (res.error) {
+        toast(`${main} didn't answer: ${res.error} Your backup (${backup}) works, so AI features still work.`, true);
+      } else {
+        toast(`Connected ✓ — the model replied “${res.reply}”` +
+          (res.backup_error ? `. Backup (${backup}) failed: ${res.backup_error}` : backup ? `. Backup (${backup}) works too.` : ""),
+          !!res.backup_error);
+      }
+    } else if (e.target.id === "save-backup") {
+      const provider = $("#ai-form").provider.value;
+      const before = aiConfig.provider;
+      const config = await saveAi(true);
+      toast(config.backup === provider
+        ? `${aiProviders[provider].label} saved as your backup`
+        : `${aiProviders[provider].label} saved${before && before !== provider ? "" : " as your main provider (add a different one as backup)"}`);
     } else if (e.target.dataset.deleteAnswer) {
       const row = e.target.closest("[data-answer]");
       if (!await ask({ title: "Delete this saved answer?", body: row.querySelector(".q").value, ok: "Delete", danger: true })) return;
@@ -1223,7 +1260,8 @@ async function loadAssistant() {
     const c = aiInfo.config;
     $("#ai-note").innerHTML = c.has_key
       ? `Using ${esc(aiInfo.providers[c.provider]?.label || c.provider)} · ${esc(c.model)}${history.length ? ` · <a href="#" id="clear-chat">Clear chat</a>` : ""}`
-      : `Set up an AI provider on the <a href="#profile" id="goto-profile">Profile tab</a> to use the assistant.`;
+      : `Set up an AI provider on the <a href="#profile" id="goto-profile">Profile tab</a> to use the assistant.
+         Free options: <a href="/guides/free-ai-setup.html" target="_blank" rel="noopener">5-minute guide ↗</a>`;
     $("#tailored-list").innerHTML = tailored.length
       ? `<div class="tailored"><b>Tailored resumes</b>${tailored.map((t) =>
           `<div class="row"><a href="/resume/${t.id}" target="_blank" rel="noopener">${esc(t.title)}</a>
@@ -1249,6 +1287,7 @@ async function sendChat(text) {
   try {
     const res = await api(`/api/jobs/${id}/chat`, { method: "POST", json: { message: text } });
     if (chatJobId === id) chat.splice(-2, 2, res.user, res.assistant);
+    if (res.backup) toast(`Your main AI provider was busy, so ${res.backup} (backup) answered`);
   } catch (e) {
     if (chatJobId === id) chat.splice(-1, 1, { role: "assistant", error: e.message });
   } finally {

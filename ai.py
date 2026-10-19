@@ -6,6 +6,7 @@ local servers such as Ollama all accept.
 """
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -27,10 +28,27 @@ PROVIDERS = {
 # Claude models that accept server-side fallback when their safety classifiers decline.
 CLAUDE_FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 TIMEOUT = 280  # Vercel stops a function at 300 s
+# When a provider is overloaded: retry after these waits, but never keep at one provider for longer
+# than RETRY_WINDOW, and stop everything (backup included) within TOTAL_BUDGET.
+RETRY_WAITS = (3, 8)
+RETRY_WINDOW = 45
+TOTAL_BUDGET = 240
+BACKUP_MIN_TIME = 30  # not worth starting the backup with less time than this left
 
 
 class AIError(Exception):
-    pass
+    def __init__(self, message, retry=False, final=False):
+        super().__init__(message)
+        self.retry = retry  # a moment later it may work (the provider said it's overloaded)
+        self.final = final  # no point asking another provider (e.g. the model declined the request)
+
+
+_answered = threading.local()
+
+
+def answered_by_backup():
+    """The backup provider's name if it answered the last complete() on this thread, else ""."""
+    return getattr(_answered, "backup", "")
 
 
 def _error_message(raw):
@@ -50,30 +68,27 @@ def _error_message(raw):
     return str(data)[:400]
 
 
-def _post(url, headers, body):
-    req_body = json.dumps(body).encode()
-    for attempt in range(2):
-        req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as res:
-                return json.load(res)
-        except urllib.error.HTTPError as e:
-            detail = _error_message(e.read().decode("utf-8", "replace"))
-            if e.code in (500, 502, 503, 504, 529) and attempt == 0:
-                time.sleep(2)  # providers are sometimes briefly overloaded; one retry usually works
-                continue
-            if e.code in (401, 403):
-                raise AIError(f"The provider rejected the API key ({e.code}): {detail}") from None
-            if e.code == 429:
-                raise AIError(f"Rate limited or out of free quota — wait a minute and try again. ({detail})") from None
-            if e.code in (500, 502, 503, 504, 529):
-                raise AIError(f"The provider is overloaded right now ({e.code}) — try again shortly. ({detail})") from None
-            raise AIError(f"Provider error {e.code}: {detail}") from None
-        except (urllib.error.URLError, TimeoutError) as e:
-            raise AIError(f"Couldn't reach the provider: {getattr(e, 'reason', e)}") from None
+def _post(url, headers, body, timeout=TIMEOUT):
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            return json.load(res)
+    except urllib.error.HTTPError as e:
+        detail = _error_message(e.read().decode("utf-8", "replace"))
+        if e.code in (401, 403):
+            raise AIError(f"The provider rejected the API key ({e.code}): {detail}") from None
+        if e.code == 429:  # quota: retrying straight away won't help, but a backup provider can
+            raise AIError(f"Rate limited or out of free quota — wait a minute and try again. ({detail})") from None
+        if e.code in (500, 502, 503, 504, 529):
+            raise AIError(f"The provider is overloaded right now ({e.code}) — try again shortly. ({detail})",
+                          retry=True) from None
+        raise AIError(f"Provider error {e.code}: {detail}") from None
+    except (urllib.error.URLError, TimeoutError) as e:
+        # Not retried: an unreachable or timed-out provider rarely recovers within seconds (the backup may help).
+        raise AIError(f"Couldn't reach the provider: {getattr(e, 'reason', e)}") from None
 
 
-def _anthropic(config, system, messages, max_tokens):
+def _anthropic(config, system, messages, max_tokens, timeout=TIMEOUT):
     model = config["model"]
     body = {"model": model, "max_tokens": max_tokens, "system": system, "messages": messages}
     headers = {"x-api-key": config["api_key"], "anthropic-version": "2023-06-01",
@@ -83,23 +98,24 @@ def _anthropic(config, system, messages, max_tokens):
         body["fallbacks"] = "default"
         headers["anthropic-beta"] = "server-side-fallback-2026-07-01"
     base = (config.get("base_url") or PROVIDERS["anthropic"]["base_url"]).rstrip("/")
-    data = _post(base + "/v1/messages", headers, body)
+    data = _post(base + "/v1/messages", headers, body, timeout)
     if data.get("stop_reason") == "refusal":
         category = (data.get("stop_details") or {}).get("category")
-        raise AIError("Claude declined this request" + (f" ({category})" if category else "") + ". Try rephrasing.")
+        raise AIError("Claude declined this request" + (f" ({category})" if category else "") + ". Try rephrasing.",
+                      final=True)
     text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
     if data.get("stop_reason") == "max_tokens":
         text += "\n\n_(The answer was cut off — ask it to continue.)_"
     return text
 
 
-def _openai_compatible(config, system, messages, max_tokens):
+def _openai_compatible(config, system, messages, max_tokens, timeout=TIMEOUT):
     base = (config.get("base_url") or PROVIDERS.get(config["provider"], {}).get("base_url") or "").rstrip("/")
     if not base:
         raise AIError("Set the provider's base URL on the Profile tab.")
     headers = {"Authorization": f"Bearer {config['api_key']}", "Content-Type": "application/json"}
     body = {"model": config["model"], "messages": [{"role": "system", "content": system}, *messages]}
-    data = _post(base + "/chat/completions", headers, body)
+    data = _post(base + "/chat/completions", headers, body, timeout)
     try:
         choice = data["choices"][0]
     except (KeyError, IndexError):
@@ -150,15 +166,51 @@ def list_models(config):
     return sorted(models, key=lambda m: m["id"])
 
 
+def _label(config):
+    return PROVIDERS.get(config.get("provider"), {}).get("label") or config.get("provider") or "The provider"
+
+
+def _attempts(config, system, messages, max_tokens, deadline, tries):
+    """Ask one provider, retrying while it's overloaded, but only within RETRY_WINDOW."""
+    started = time.monotonic()
+    for attempt in range(tries):
+        timeout = max(5, min(TIMEOUT, deadline - time.monotonic()))
+        try:
+            if config["provider"] == "anthropic":
+                return _anthropic(config, system, messages, max_tokens, timeout)
+            return _openai_compatible(config, system, messages, max_tokens, timeout)
+        except AIError as e:
+            wait = RETRY_WAITS[min(attempt, len(RETRY_WAITS) - 1)]
+            if (not e.retry or attempt == tries - 1 or time.monotonic() + wait - started > RETRY_WINDOW
+                    or time.monotonic() + wait > deadline):
+                raise
+            time.sleep(wait)
+
+
 def complete(config, system, messages, max_tokens=16000):
-    """Send a conversation (list of {role, content}) and return the reply text."""
+    """Send a conversation (list of {role, content}) and return the reply text.
+
+    If config has a "fallback" (another provider's settings) and the chosen provider fails,
+    the fallback answers instead; answered_by_backup() then names it."""
+    _answered.backup = ""
     if not config or not config.get("api_key"):
         raise AIError("Add an AI provider and API key on the Profile tab first.")
     if not config.get("model"):
         raise AIError("Choose a model on the Profile tab first.")
-    if config["provider"] == "anthropic":
-        return _anthropic(config, system, messages, max_tokens)
-    return _openai_compatible(config, system, messages, max_tokens)
+    deadline = time.monotonic() + TOTAL_BUDGET
+    try:
+        return _attempts(config, system, messages, max_tokens, deadline, tries=3)
+    except AIError as first:
+        backup = config.get("fallback") or {}
+        if first.final or not (backup.get("api_key") and backup.get("model")) \
+                or deadline - time.monotonic() < BACKUP_MIN_TIME:
+            raise
+        try:
+            text = _attempts(backup, system, messages, max_tokens, deadline, tries=2)
+        except AIError as second:
+            raise AIError(f"{_label(config)}: {first}\nBackup ({_label(backup)}): {second}") from None
+        _answered.backup = _label(backup)
+        return text
 
 
 # The layout the tracker's resume page renders (dates right-aligned, bold skill labels…).

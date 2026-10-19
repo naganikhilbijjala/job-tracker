@@ -19,6 +19,7 @@ for var in ("APP_PASSWORD", "TURSO_DATABASE_URL", "VERCEL", "SESSION_SECRET"):
     os.environ.pop(var, None)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import database  # noqa: E402
 import gdrive  # noqa: E402
 import server  # noqa: E402
 
@@ -398,6 +399,26 @@ class MultiUserTest(unittest.TestCase):
         self.assertTrue(self.admin.call("GET", "/api/meta")["json"]["flag_sponsorship"])  # per person
         f.call("PUT", "/api/settings/sponsorship", {"on": True})
         self.assertEqual(Client().call("POST", "/api/sponsorship", {"description": "x"})["status"], 401)
+
+    def test_backup_ai_provider_settings(self):
+        f = self.friend
+        f.call("PUT", "/api/ai", {"provider": "gemini", "api_key": "gemini-key-123456", "model": "gemini-flash"})
+        cfg = f.call("PUT", "/api/ai", {"provider": "groq", "api_key": "groq-key-123456", "model": "big",
+                                        "as_backup": True})["json"]["config"]
+        self.assertEqual((cfg["provider"], cfg["backup"]), ("gemini", "groq"))  # main provider unchanged
+        db, _ = server.store()
+        config = server.ai_config(database.UserDB(db, self.friend_id))
+        self.assertEqual((config["provider"], config["fallback"]["provider"]), ("gemini", "groq"))
+        self.assertNotIn("fallback", server.ai_config(database.UserDB(db, self.friend_id), with_backup=False))
+        self.assertNotIn("api_key", json.dumps(f.call("GET", "/api/ai")["json"]))  # keys never go back
+        # Clearing it, and refusing a provider with no saved key.
+        self.assertEqual(f.call("PUT", "/api/ai/backup", {"provider": ""})["json"]["config"]["backup"], "")
+        self.assertEqual(f.call("PUT", "/api/ai/backup", {"provider": "openai"})["status"], 400)
+        self.assertEqual(f.call("PUT", "/api/ai/backup", {"provider": "groq"})["json"]["config"]["backup"], "groq")
+        # Making the backup the main provider means there's no separate backup any more.
+        cfg = f.call("PUT", "/api/ai", {"provider": "groq", "model": "big"})["json"]["config"]
+        self.assertEqual((cfg["provider"], cfg["backup"]), ("groq", ""))
+        self.assertEqual(self.admin.call("GET", "/api/ai")["json"]["config"]["backup"], "")  # per person
 
     def test_forged_or_anonymous_requests(self):
         self.assertEqual(Client().call("GET", "/api/jobs")["status"], 401)

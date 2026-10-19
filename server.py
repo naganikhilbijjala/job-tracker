@@ -754,6 +754,8 @@ def check_request(req):
 def serve_public(path):
     rel = "index.html" if path in ("", "/") else path.lstrip("/")
     target = (PUBLIC / rel).resolve()
+    if target.is_dir():  # /guides/ → guides/index.html, as Vercel serves it
+        target = target / "index.html"
     if not target.is_relative_to(PUBLIC.resolve()) or not target.is_file():
         raise ApiError(404, "Not found")
     ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
@@ -1238,13 +1240,25 @@ def ai_settings(db):
     return saved
 
 
-def ai_config(db, provider=None):
-    """The settings for one provider (the chosen one by default), as ai.complete expects them."""
+def ai_config(db, provider=None, with_backup=True):
+    """The settings for one provider (the chosen one by default), as ai.complete expects them,
+    plus the backup provider's as "fallback" when one is set up."""
     saved = ai_settings(db)
-    provider = provider or saved.get("provider")
-    if not provider:
+    chosen = provider or saved.get("provider")
+    if not chosen:
         return {}
-    return {"provider": provider, **saved.get("providers", {}).get(provider, {})}
+    config = {"provider": chosen, **saved.get("providers", {}).get(chosen, {})}
+    backup = backup_provider(saved)
+    if with_backup and not provider and backup:
+        config["fallback"] = {"provider": backup, **saved["providers"][backup]}
+    return config
+
+
+def backup_provider(saved):
+    """The backup provider, if it's set, isn't the chosen one, and has a key."""
+    backup = saved.get("backup", "")
+    ok = backup and backup != saved.get("provider") and saved.get("providers", {}).get(backup, {}).get("api_key")
+    return backup if ok else ""
 
 
 def public_ai_config(saved):
@@ -1254,7 +1268,8 @@ def public_ai_config(saved):
                 "key_hint": f"…{key[-4:]}" if len(key) > 8 else ""}
     provider = saved.get("provider", "anthropic")
     per_provider = {p: public(c) for p, c in saved.get("providers", {}).items()}
-    return {"provider": provider, **per_provider.get(provider, public({})), "saved": per_provider}
+    return {"provider": provider, **per_provider.get(provider, public({})), "saved": per_provider,
+            "backup": backup_provider(saved)}
 
 
 def save_profile(db, profile=None, instructions=None, by="you"):
@@ -1323,7 +1338,23 @@ def ai_put(req):
         # A blank key means "keep the saved one" (the browser never gets the key back).
         "api_key": str(data.get("api_key", "")).strip() or old.get("api_key", ""),
     }
-    saved["provider"] = provider
+    if data.get("as_backup") and saved.get("provider") and saved["provider"] != provider:
+        saved["backup"] = provider  # keep the main provider; use this one when it's busy
+    else:
+        saved["provider"] = provider
+    db.set_setting("ai_config", json.dumps(saved))
+    return json_response({"config": public_ai_config(saved)})
+
+
+@route("PUT", r"/api/ai/backup")
+def ai_backup(req):
+    """Choose (or clear, with "") the provider to fall back to when the main one is busy."""
+    db, _ = backend()
+    provider = str(req.json().get("provider", ""))
+    saved = ai_settings(db)
+    if provider and not saved.get("providers", {}).get(provider, {}).get("api_key"):
+        raise ApiError(400, "Save a key for that provider first")
+    saved["backup"] = provider
     db.set_setting("ai_config", json.dumps(saved))
     return json_response({"config": public_ai_config(saved)})
 
@@ -1348,12 +1379,24 @@ def ai_models(req):
 @route("POST", r"/api/ai/test")
 def ai_test(req):
     db, _ = backend()
+    def test(config):
+        return ai.complete(config, "You are a connection test.",
+                           [{"role": "user", "content": "Reply with just the word OK."}], max_tokens=1024)[:200]
+    # Each provider on its own, so a working backup can't hide a broken main key (or the reverse).
+    out = {}
     try:
-        reply = ai.complete(ai_config(db), "You are a connection test.",
-                            [{"role": "user", "content": "Reply with just the word OK."}], max_tokens=1024)
+        out["reply"] = test(ai_config(db, with_backup=False))
     except ai.AIError as e:
-        raise ApiError(400, str(e)) from None
-    return json_response({"reply": reply[:200]})
+        out["error"] = str(e)
+    backup = ai_config(db).get("fallback")
+    if backup:
+        try:
+            out["backup_reply"] = test(backup)
+        except ai.AIError as e:
+            out["backup_error"] = str(e)
+    if "error" in out and "backup_reply" not in out:
+        raise ApiError(400, out["error"] + (f" Backup: {out['backup_error']}" if backup else ""))
+    return json_response(out)
 
 
 # ---------------------------------------------------------------- routes: application form answers
@@ -1520,7 +1563,8 @@ def chat_send(req, job_id):
         ("INSERT INTO chat_messages (job_id, role, content, created_at) VALUES (?, 'assistant', ?, ?)", (job_id, reply, now())),
     ])
     return json_response({"user": {"role": "user", "content": text, "created_at": at},
-                          "assistant": {"role": "assistant", "content": reply, "created_at": now()}})
+                          "assistant": {"role": "assistant", "content": reply, "created_at": now()},
+                          "backup": ai.answered_by_backup()})
 
 
 @route("DELETE", r"/api/jobs/(\d+)/chat")
