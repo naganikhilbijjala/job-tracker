@@ -8,8 +8,8 @@
   <meta name="theme-color" content="#2f6fed">
   <link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="icon" href="/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/style.css?v=2">
-  <link rel="stylesheet" href="/static/landing.css?v=2">
+  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link rel="stylesheet" href="/static/landing.css?v=3">
 </head>
 <body>
   <div class="lp">
@@ -133,8 +133,11 @@
 
       <h2 id="privacy">Privacy</h2>
       <ul>
-        <li>Your key is stored in this ApplyStack's database and is never sent back to your browser. The person who
-          runs this ApplyStack can technically see it (see the <a href="/privacy.html">privacy policy</a>).</li>
+        <li>Your key is encrypted before it's saved, with the encryption key kept outside the database, so it can't be
+          read from the database, the admin included. It's never sent back to your browser; you only see its last four
+          characters. Details are in the <a href="/privacy.html">privacy policy</a>.</li>
+        <li>If you ever want to cut ApplyStack off, delete the key on the provider's website. It stops working
+          everywhere at once.</li>
         <li>When you use an AI feature, the text it needs, like the job description and your profile, goes to the
           provider you picked.</li>
         <li>On free plans, some providers may use what you send to improve their products. Check their terms; if

@@ -420,6 +420,33 @@ class MultiUserTest(unittest.TestCase):
         self.assertEqual((cfg["provider"], cfg["backup"]), ("groq", ""))
         self.assertEqual(self.admin.call("GET", "/api/ai")["json"]["config"]["backup"], "")  # per person
 
+    def test_keys_are_stored_encrypted(self):
+        f = self.friend
+        f.call("PUT", "/api/ai", {"provider": "openai", "api_key": "sk-PLAINTEXT-friend-998877", "model": "m"})
+        db, _ = server.store()
+        raw = db.query("SELECT value FROM user_settings WHERE user_id = ? AND key = 'ai_config'", (self.friend_id,))
+        self.assertTrue(raw[0]["value"].startswith("enc1:"))
+        self.assertNotIn("PLAINTEXT", raw[0]["value"])
+        self.assertNotIn("PLAINTEXT", json.dumps(db.query("SELECT * FROM user_settings")))
+        user = database.UserDB(db, self.friend_id)
+        self.assertEqual(server.ai_config(user, "openai")["api_key"], "sk-PLAINTEXT-friend-998877")  # still usable
+        self.assertEqual(f.call("GET", "/api/ai")["json"]["config"]["saved"]["openai"]["key_hint"], "…8877")
+        # Google Drive tokens too.
+        user.set_setting("google_token", '{"refresh_token": "1//PLAINTEXT-refresh"}')
+        self.assertNotIn("PLAINTEXT", json.dumps(db.query("SELECT * FROM user_settings")))
+        self.assertIn("PLAINTEXT-refresh", user.get_setting("google_token"))
+
+    def test_plain_text_keys_from_before_get_encrypted(self):
+        db, _ = server.store()
+        db.execute("INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, 'ai_config', ?)",
+                   (self.friend_id, json.dumps({"provider": "groq", "providers": {"groq": {
+                       "api_key": "gsk_OLD-PLAINTEXT", "model": "m", "base_url": ""}}})))
+        self.assertEqual(server.ai_config(database.UserDB(db, self.friend_id))["api_key"], "gsk_OLD-PLAINTEXT")
+        self.assertGreaterEqual(database.encrypt_secrets(db, database.UserDB.keyring), 1)
+        self.assertNotIn("OLD-PLAINTEXT", json.dumps(db.query("SELECT * FROM user_settings")))
+        self.assertEqual(server.ai_config(database.UserDB(db, self.friend_id))["api_key"], "gsk_OLD-PLAINTEXT")
+        self.assertEqual(database.encrypt_secrets(db, database.UserDB.keyring), 0)  # nothing left to do
+
     def test_forged_or_anonymous_requests(self):
         self.assertEqual(Client().call("GET", "/api/jobs")["status"], 401)
         forged = Client()

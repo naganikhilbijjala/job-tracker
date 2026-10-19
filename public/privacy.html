@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#2f6fed">
   <link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="icon" href="/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/style.css?v=2">
-  <link rel="stylesheet" href="/static/landing.css?v=2">
+  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link rel="stylesheet" href="/static/landing.css?v=3">
   <style>
     .policy { max-width: 720px; margin: 0 auto; padding: 8px 24px 64px; font-size: 16px; line-height: 1.65; }
     .policy h1 { font-size: 32px; margin: 24px 0 4px; }
@@ -31,7 +31,7 @@
 
     <main class="policy">
       <h1>Privacy Policy</h1>
-      <p class="updated">Last updated: October 18, 2026</p>
+      <p class="updated">Last updated: October 19, 2026</p>
 
       <p>ApplyStack is a free, open-source app for tracking job applications. Each copy of it is run by one person
         (the "admin") who shares it with friends. This page explains what this site stores and why.</p>
@@ -42,8 +42,9 @@
           create your account and show you who you are signed in as. We don't ask Google for anything else.</li>
         <li><b>What you put in the app</b>: jobs, job descriptions, notes, statuses, resumes, profile details and
           AI chat history.</li>
-        <li><b>An AI provider API key</b>, if you add one on the Profile tab. It is stored so the app can make AI
-          requests for you, and is never sent back to your browser.</li>
+        <li><b>An AI provider API key</b>, if you add one on the Profile tab, so the app can make AI requests for
+          you. It is stored encrypted (see below), and is never sent back to your browser; you only ever see its last
+          four characters.</li>
         <li><b>A login cookie</b> that keeps you signed in. We don't use advertising or analytics cookies.</li>
       </ul>
 
@@ -56,8 +57,22 @@
         <li>The app is hosted on <a href="https://vercel.com/legal/privacy-policy" target="_blank" rel="noopener">Vercel</a>
           and its database is on <a href="https://turso.tech/privacy-policy" target="_blank" rel="noopener">Turso</a>,
           which store the data on our behalf.</li>
-        <li>The admin owns the database, so they can technically read everything stored in it, including saved AI
-          keys.</li>
+        <li>The admin runs the database that holds your jobs, resumes and profile, so only use this site if you
+          trust the person who shared it with you.</li>
+      </ul>
+
+      <h2>How your API key is protected</h2>
+      <ul>
+        <li>Your AI key, and your Google Drive connection if you turn it on, are <b>encrypted before they are
+          saved</b>. The database only holds scrambled text; the encryption key is kept separately, in the server's
+          settings, not in the database. So nobody browsing the database, or holding a copy of it, can read your key,
+          the admin included.</li>
+        <li>The key is decrypted only inside the server, at the moment a request is sent to your AI provider, and is
+          never written to logs or shown in full.</li>
+        <li>As with any service you give an API key to, the server itself has to be trusted. Use a key you can delete
+          from the provider's website at any time, and with paid providers, set a spending limit. You can remove your
+          key from ApplyStack by deleting it from the provider's website, or by asking the admin to delete your
+          account.</li>
       </ul>
 
       <h2>Google user data</h2>

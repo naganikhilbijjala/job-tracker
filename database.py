@@ -13,6 +13,8 @@ import threading
 import urllib.parse
 from pathlib import Path
 
+import secretbox
+
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS resumes (
          id          INTEGER PRIMARY KEY,
@@ -152,11 +154,17 @@ class _Database:
                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
 
 
+# Per-person settings that are secrets: stored encrypted (see secretbox.py), never as plain text.
+SECRET_SETTINGS = ("ai_config", "google_token")
+
+
 class UserDB:
     """One person's view of the database: settings are theirs, and `uid` scopes queries.
 
     Every query on jobs, resumes or generated_resumes must still filter on user_id = db.uid
     (or go through a find_* helper that does)."""
+
+    keyring = None  # a secretbox.Keyring, set by the server before any request
 
     def __init__(self, db, uid):
         self.db, self.uid = db, uid
@@ -172,14 +180,50 @@ class UserDB:
 
     def get_setting(self, key):
         rows = self.db.query("SELECT value FROM user_settings WHERE user_id = ? AND key = ?", (self.uid, key))
-        return rows[0]["value"] if rows else None
+        value = rows[0]["value"] if rows else None
+        if value is not None and key in SECRET_SETTINGS:
+            return open_secret(self.keyring, value, secret_context(self.uid, key))
+        return value
 
     def set_setting(self, key, value):
         if value is None:
             self.db.execute("DELETE FROM user_settings WHERE user_id = ? AND key = ?", (self.uid, key))
         else:
+            if key in SECRET_SETTINGS:
+                value = self.keyring.encrypt(value, secret_context(self.uid, key))
             self.db.execute("INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?) "
                             "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value", (self.uid, key, value))
+
+
+def secret_context(uid, key):
+    return f"user:{uid}:{key}"
+
+
+def open_secret(keyring, value, context):
+    """A stored secret as plain text; None if it can't be decrypted (e.g. the encryption key changed)."""
+    if not secretbox.is_encrypted(value):
+        return value  # saved before encryption; encrypt_secrets() converts these at startup
+    try:
+        return keyring.decrypt(value, context)
+    except secretbox.SecretError:
+        return None
+
+
+def encrypt_secrets(db, keyring):
+    """Encrypt secrets saved as plain text before encryption existed, and re-encrypt any made with
+    an older key, so the database holds only ciphertext under the current key."""
+    marks = ", ".join("?" * len(SECRET_SETTINGS))
+    rows = db.query(f"SELECT user_id, key, value FROM user_settings WHERE key IN ({marks})", SECRET_SETTINGS)
+    updates = []
+    for r in rows:
+        context = secret_context(r["user_id"], r["key"])
+        if keyring.needs_reencrypting(r["value"], context):
+            plain = open_secret(keyring, r["value"], context)
+            updates.append(("UPDATE user_settings SET value = ? WHERE user_id = ? AND key = ?",
+                            (keyring.encrypt(plain, context), r["user_id"], r["key"])))
+    if updates:
+        db.run_many(updates)
+    return len(updates)
 
 
 class LocalDB(_Database):

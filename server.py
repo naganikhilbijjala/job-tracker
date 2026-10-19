@@ -37,6 +37,7 @@ import gdrive
 import mcp
 import pdf
 import scoring
+import secretbox
 import sponsorship
 
 ROOT = Path(__file__).resolve().parent
@@ -104,8 +105,29 @@ def store():
     with _backend_lock:
         if _backend is None:
             _backend = database.open_backend(DATA)
+            database.UserDB.keyring = secretbox.Keyring(encryption_keys())
+            database.encrypt_secrets(_backend[0], database.UserDB.keyring)
             check_unchecked_jobs(_backend[0])
         return _backend
+
+
+def encryption_keys():
+    """Master keys for secrets at rest, newest first: ENCRYPTION_KEY (set it on Vercel), then one
+    derived from the session secret (older installs), then a local key file. Saved secrets made
+    with a later one are re-encrypted with the first at startup."""
+    keys = []
+    if os.environ.get("ENCRYPTION_KEY"):
+        keys.append(hashlib.sha256(b"applystack-encryption:" + os.environ["ENCRYPTION_KEY"].encode()).digest())
+    if _SECRET_SOURCE:
+        keys.append(hashlib.sha256(b"applystack-encryption-derived:" + _SECRET_SOURCE.encode()).digest())
+    if not ON_VERCEL:
+        path = DATA / "encryption.key"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(secrets.token_urlsafe(32))
+            path.chmod(0o600)
+        keys.append(hashlib.sha256(b"applystack-encryption-file:" + path.read_text().strip().encode()).digest())
+    return keys
 
 
 def check_unchecked_jobs(db):

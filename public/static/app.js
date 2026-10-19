@@ -203,11 +203,11 @@ async function showLogin() {
   const { auth = {} } = state.meta;
   const err = new URLSearchParams(location.search).get("login_error");
   if (err) history.replaceState(null, "", "/");
-  // With Google sign-in the public landing page is the front door; the password card is for the admin.
-  if (auth.google) {
+  // With Google sign-in the public landing page is the front door. The password card is only for the
+  // admin, at /#admin (not linked anywhere), as a way in if Google sign-in ever breaks.
+  if (auth.google && !(auth.password && location.hash === "#admin")) {
     $("#login").hidden = true;
     $("#landing").hidden = false;
-    $("#admin-login").hidden = !auth.password;
     $("#landing-error").textContent = err || "";
     $("#landing-error").hidden = !err;
     startLanding();
@@ -224,11 +224,6 @@ function showPasswordCard(err) {
   $("#login-error").hidden = !err;
   $("#login-form").password.focus();
 }
-
-$("#admin-login").addEventListener("click", (e) => {
-  e.preventDefault();
-  showPasswordCard();
-});
 
 // Landing page motion: sections fade up as they scroll in; numbers count up; the extension "types".
 let landingStarted = false;
@@ -925,7 +920,7 @@ function renderAiPanel(config) {
     .map(([k, p]) => `<option value="${k}" ${k === config.provider ? "selected" : ""}>${esc(p.label)}</option>`).join("");
   $("#ai-panel").innerHTML = `
     <h3>AI provider</h3>
-    <p class="muted small">Used by the ✨ Assistant in each job. You pay the provider directly; keys are stored in your ApplyStack database and never sent back to the browser.</p>
+    <p class="muted small">Used by the ✨ Assistant in each job. You pay the provider directly. Keys are encrypted before they're saved and never sent back to the browser.</p>
     <form id="ai-form">
       <label class="field">Provider<select name="provider">${options}</select></label>
       <label class="field">API key <a id="key-link" class="key-link small" target="_blank" rel="noopener">Get a key ↗</a>

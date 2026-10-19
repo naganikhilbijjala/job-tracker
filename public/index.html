@@ -13,8 +13,8 @@
   <meta name="description" content="Track job applications, save every job description, and send AI-tailored resumes checked against each job. Free and open source.">
   <!-- The theme picked in the account menu, applied before the page paints so it doesn't flash. -->
   <script>try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}</script>
-  <link rel="stylesheet" href="/static/style.css?v=2">
-  <link rel="stylesheet" href="/static/landing.css?v=2">
+  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link rel="stylesheet" href="/static/landing.css?v=3">
 </head>
 <body>
   <div id="landing" class="lp" hidden>
@@ -177,8 +177,7 @@
 
     <footer class="lp-foot">
       <span>ApplyStack · <a href="https://github.com/naganikhilbijjala/job-tracker" target="_blank" rel="noopener">Open source on GitHub</a> (MIT) · <a href="/guides/">Guides</a> · <a href="/privacy.html">Privacy</a></span>
-      <span>Your data is private to your account; the person running this site can access its database.
-        <a href="#" id="admin-login" hidden>Admin login</a></span>
+      <span>Your data is private to your account, and AI keys are stored encrypted.</span>
     </footer>
   </div>
 
@@ -366,7 +365,7 @@
   </dialog>
 
   <div id="toast" role="status"><span id="toast-text"></span><button type="button" id="toast-action" hidden></button></div>
-  <script src="/static/markdown.js?v=2"></script>
-  <script src="/static/app.js?v=2"></script>
+  <script src="/static/markdown.js?v=3"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>

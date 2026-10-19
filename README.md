@@ -50,6 +50,7 @@ git push -u origin main
    | `APP_PASSWORD` | A long password you'll log in with |
    | `TURSO_DATABASE_URL` | The `libsql://…` URL from step 1 |
    | `TURSO_AUTH_TOKEN` | The token from step 1 |
+   | `ENCRYPTION_KEY` | A long random string, e.g. from `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`. Saved AI keys and Google tokens are encrypted with it. **Keep it safe and don't change it**: if it changes, people have to paste their AI keys again. |
 4. Click **Deploy**. You'll get an address like `https://job-tracker-yourname.vercel.app`.
 
 From then on, every `git push` redeploys automatically. Your data stays in Turso between deploys.
@@ -90,7 +91,7 @@ The **paste-a-link** auto-fill in the app itself works for Greenhouse, Lever, As
 ## ✨ AI assistant (tailored resumes, form answers)
 
 1. **Profile tab:** paste your full master resume. Include everything (all roles, projects, skills, numbers), because the assistant picks what fits each job and only uses facts from here. Add standing instructions such as "one page, lead with backend work".
-2. **Profile tab → AI provider:** choose Anthropic (Claude), OpenAI, Gemini, OpenRouter, Groq, or any OpenAI-compatible endpoint, then paste your API key. The models your key can use load into the list; pick one and click **Test**. Each provider keeps its own key, so you can switch between them without pasting it again. You pay the provider directly; a tailored resume costs a few cents. The key is stored in your tracker's database and is never sent back to the browser. **Free option:** a Google Gemini key, plus a free Groq key added with **Save as backup**. When the main provider is overloaded, the app retries briefly (about 10 seconds at most), then the backup answers. The step-by-step guide is at `/guides/free-ai-setup.html` on your site.
+2. **Profile tab → AI provider:** choose Anthropic (Claude), OpenAI, Gemini, OpenRouter, Groq, or any OpenAI-compatible endpoint, then paste your API key. The models your key can use load into the list; pick one and click **Test**. Each provider keeps its own key, so you can switch between them without pasting it again. You pay the provider directly; a tailored resume costs a few cents. The key is encrypted before it's saved (with `ENCRYPTION_KEY`, kept outside the database) and is never sent back to the browser. **Free option:** a Google Gemini key, plus a free Groq key added with **Save as backup**. When the main provider is overloaded, the app retries briefly (about 10 seconds at most), then the backup answers. The step-by-step guide is at `/guides/free-ai-setup.html` on your site.
 3. **On any job, open ✨ Assistant.** It knows your profile and that job's saved description. Use the quick actions (*Tailor resume*, *10 skills to add*, *Why this company?*, *Cover letter*, *How well do I match?*), or paste any question from an application form. Each job keeps its own chat history.
 4. When it writes a resume, click **Open & save as PDF**. You can edit the page directly, then click **Download PDF**: a one-page file named like `Your Name Resume - Company.pdf`, ready to upload. On a phone it goes to Downloads, and it's first under **Recent** when an application asks for your resume. Tailored resumes stay listed on the job, with a **PDF ↓** link.
 5. **Check the score** in the panel beside the resume (the **Score** button shows or hides it). Applicant-tracking systems don't really score resumes. They read the text and recruiters search it by keyword, so the score estimates both:
@@ -151,7 +152,9 @@ One deployment and one database can serve you and anyone you share the link with
 Each person uses their own AI key (Profile tab) and their own Claude/MCP token. For the browser extension, they click **Get connection code** on the Resumes tab and paste it in place of a password.
 
 **Good to know:**
-- As the owner of the database, you can technically read everyone's data, including the AI keys they save. Tell your friends.
+- AI keys and Google Drive tokens are stored encrypted, so nobody browsing the database, you included, can read them. Jobs, resumes and profiles are stored as normal, so you can see those in Turso; tell your friends.
+- Set `ENCRYPTION_KEY` (see the table in "Deploy on Vercel"). Without it, keys are encrypted with a key derived from `APP_PASSWORD` (or the Google client secret), and changing that would make saved keys unreadable. Adding `ENCRYPTION_KEY` later is fine: existing keys are re-encrypted with it on the next start.
+- If Google sign-in ever breaks, the admin password still works at `https://YOUR-APP.vercel.app/#admin`.
 - The **Users** tab shows how many jobs and how much resume storage each person uses. Turso's free plan includes 5 GB, which is far more than a group of friends needs.
 
 ## Run it on your computer instead
@@ -183,6 +186,7 @@ This project is open source under the [MIT License](LICENSE). Bug reports, ideas
 | `gdrive.py` | Google sign-in, plus Drive OAuth + upload |
 | `ai.py` | AI providers (Anthropic + OpenAI-compatible), the assistant's prompt, and the AI resume review |
 | `scoring.py` | Resume score: keyword match with the job description and format checks (no AI) |
+| `secretbox.py` | Encrypts saved AI keys and Google tokens (stdlib: SHAKE-256 keystream + HMAC-SHA256) |
 | `sponsorship.py` | Reads what a job description says about visa sponsorship (no AI) |
 | `autofill.py` | Matching application-form questions to profile facts and saved answers |
 | `mcp.py`, `mcp_bridge.py` | MCP server for Claude, and the Claude Desktop bridge |
