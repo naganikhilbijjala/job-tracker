@@ -1,0 +1,8 @@
+{
+  "headers": [
+    {
+      "source": "/((?!api/|mcp|files/|resume/|oauth2callback|login/).*)",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    }
+  ]
+}
