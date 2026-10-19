@@ -48,7 +48,13 @@ def win(text):
         alt = FALLBACK.get(ch)
         if alt is None:
             alt = "".join(c for c in unicodedata.normalize("NFKD", ch) if not unicodedata.combining(c))
-        out += alt.encode("cp1252", "replace")
+        try:
+            out += alt.encode("cp1252")
+        except UnicodeEncodeError:
+            # Symbols and emoji the font can't draw (↗, ★, 🚀) are decoration: leave them out. A letter
+            # it can't draw stays visible as "?", so a name is never silently changed.
+            kind = unicodedata.category(ch)[0]
+            out += b" " if kind == "Z" else b"" if kind in "SPCM" else b"?"
     return bytes(out)
 
 

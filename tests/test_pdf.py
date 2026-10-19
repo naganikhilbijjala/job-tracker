@@ -64,6 +64,8 @@ class PdfTest(unittest.TestCase):
     def test_characters_outside_the_standard_fonts(self):
         self.assertEqual(pdf.win("Café – “quoted” • Zoë"), "Café – “quoted” • Zoë".encode("cp1252"))
         self.assertEqual(pdf.win("\u0106uk \u2192 \u0141\u00f3d\u017a \u2713 \u4f60"), b"Cuk -> L\xf3dz  ?")  # never a crash
+        # Decorative symbols the font lacks are dropped, not shown as "?"
+        self.assertEqual(pdf.win("applystack.app \u2197 \u2605 \U0001f680\ufe0f"), b"applystack.app   ")
 
     def test_file_names(self):
         self.assertEqual(pdf.file_name(resume(1), "Acme"), "Alex Example Resume - Acme.pdf")
