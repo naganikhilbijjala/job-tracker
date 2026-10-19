@@ -35,6 +35,7 @@ import autofill
 import database
 import gdrive
 import mcp
+import pdf
 import scoring
 
 ROOT = Path(__file__).resolve().parent
@@ -1539,10 +1540,29 @@ def generated_create(req, job_id):
     return json_response({"id": gid, "url": f"/resume/{gid}"}, 201)
 
 
+def generated_file_name(db, g):
+    rows = db.query("SELECT company FROM jobs WHERE id = ? AND user_id = ?", (g["job_id"], db.uid)) if g["job_id"] else []
+    return pdf.file_name(g["content"], rows[0]["company"] if rows else "")
+
+
 @route("GET", r"/api/generated/(\d+)")
 def generated_get(req, gid):
     db, _ = backend()
-    return json_response(find_generated(db, gid))
+    g = find_generated(db, gid)
+    return json_response({**g, "file_name": generated_file_name(db, g)})
+
+
+@route("GET", r"/api/generated/(\d+)/pdf")
+def generated_pdf(req, gid):
+    """The tailored resume as a one-page PDF, ready to upload to an application."""
+    db, _ = backend()
+    g = find_generated(db, gid)
+    name = generated_file_name(db, g)
+    author = re.search(r"^#\s+(.+)$", g["content"], re.M)
+    data, info = pdf.render(g["content"], req.query.get("size", "auto"), title=name.removesuffix(".pdf"),
+                            author=author.group(1).strip() if author else "")
+    status, headers, body = file_response(data, name, "inline" if req.query.get("view") else "attachment")
+    return status, [*headers, ("X-Resume-Pages", str(info["pages"]))], body
 
 
 @route("PUT", r"/api/generated/(\d+)")

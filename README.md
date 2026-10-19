@@ -91,7 +91,7 @@ The **paste-a-link** auto-fill in the app itself works for Greenhouse, Lever, As
 1. **Profile tab:** paste your full master resume. Include everything (all roles, projects, skills, numbers), because the assistant picks what fits each job and only uses facts from here. Add standing instructions such as "one page, lead with backend work".
 2. **Profile tab → AI provider:** choose Anthropic (Claude), OpenAI, Gemini, OpenRouter, Groq, or any OpenAI-compatible endpoint, then paste your API key. The models your key can use load into the list; pick one and click **Test**. Each provider keeps its own key, so you can switch between them without pasting it again. You pay the provider directly; a tailored resume costs a few cents. The key is stored in your tracker's database and is never sent back to the browser.
 3. **On any job, open ✨ Assistant.** It knows your profile and that job's saved description. Use the quick actions (*Tailor resume*, *10 skills to add*, *Why this company?*, *Cover letter*, *How well do I match?*), or paste any question from an application form. Each job keeps its own chat history.
-4. When it writes a resume, click **Open & save as PDF**. You can edit the page directly, then use **Save as PDF** (choose "Save as PDF" in the print dialog and turn off headers and footers). Tailored resumes stay listed on the job.
+4. When it writes a resume, click **Open & save as PDF**. You can edit the page directly, then click **Download PDF**: a one-page file named like `Your Name Resume - Company.pdf`, ready to upload. On a phone it goes to Downloads, and it's first under **Recent** when an application asks for your resume. Tailored resumes stay listed on the job, with a **PDF ↓** link.
 5. **Check the score** in the panel beside the resume (the **Score** button shows or hides it). Applicant-tracking systems don't really score resumes. They read the text and recruiters search it by keyword, so the score estimates both:
    - **Keywords (60%):** skills and phrases from the job description, split into *in the resume*, *in your profile but missing here* (easy wins), and *not in your profile* (real gaps: don't add these just for the score). A dot marks ones listed as requirements.
    - **Format (40%):** name and contact details, standard section headings, dates on every role in one format, bullets per role, measurable results, strong opening verbs, length, and no tables or images.
@@ -185,6 +185,7 @@ This project is open source under the [MIT License](LICENSE). Bug reports, ideas
 | `autofill.py` | Matching application-form questions to profile facts and saved answers |
 | `mcp.py`, `mcp_bridge.py` | MCP server for Claude, and the Claude Desktop bridge |
 | `public/` | The web pages, icons, and home-screen app manifest |
-| `templates/print.html` | The tailored resume page (edit, score, print to PDF) |
+| `templates/print.html` | The tailored resume page (edit, score, download as PDF) |
+| `pdf.py` | Resume PDFs with the standard library: layout, fit to one page, Helvetica text |
 | `extension/` | Chrome/Firefox extension: save a job, fill application forms |
 | `pyproject.toml` | Tells Vercel how to run the app |

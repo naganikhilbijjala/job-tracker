@@ -23,6 +23,7 @@ Your local data goes in `data/`, which git ignores. To try the AI features, add 
 | `ai.py` | AI providers and prompts |
 | `scoring.py` | Resume keyword and format scoring |
 | `autofill.py` | Matching application-form questions to profile facts and saved answers |
+| `pdf.py` | Resume PDFs (one page, real text, no dependencies) |
 | `tests/` | Automated tests (standard library `unittest`) |
 | `mcp.py`, `mcp_bridge.py` | MCP server for Claude |
 | `gdrive.py` | Google Drive backup |

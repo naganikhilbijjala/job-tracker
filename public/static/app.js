@@ -1180,6 +1180,7 @@ async function loadAssistant() {
           `<div class="row"><a href="/resume/${t.id}" target="_blank" rel="noopener">${esc(t.title)}</a>
            ${t.score != null ? `<span class="score-pill ${t.score >= 75 ? "good" : t.score >= 50 ? "warn" : "bad"}" title="Keyword and format score">${t.score}</span>` : ""}
            <span class="muted small">${t.source === "claude" ? "from Claude · " : ""}${ago(t.created_at)}</span>
+           <a class="small" href="/api/generated/${t.id}/pdf" title="Download as a one-page PDF">PDF ↓</a>
            <button type="button" class="icon small danger" data-delete-tailored="${t.id}" title="Delete">✕</button></div>`).join("")}</div>`
       : "";
     if (chatJobId !== id || !chat.some((m) => m.pending)) { chat = history; chatJobId = id; }

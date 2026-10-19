@@ -44,7 +44,9 @@
       font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--bar-border);
       background: transparent; color: inherit; cursor: pointer;
     }
-    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.primary, a.button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    a.button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--bar-border);
+               text-decoration: none; display: inline-block; }
 
     .layout { display: flex; justify-content: center; align-items: flex-start; gap: 24px; }
     .layout .sheet { margin-left: 0; margin-right: 0; flex: none; }
@@ -96,7 +98,7 @@
              box-shadow: 0 2px 10px rgba(0, 0, 0, .12); }
     /* --fs, --lh and --gap are set by the script (see fitStyle) so the resume fills exactly one page. */
     .resume { --fs: 10.5pt; --lh: 1.32; --gap: 1; color: var(--ink);
-              font: var(--fs)/var(--lh) "Calibri", "Carlito", "Helvetica Neue", Arial, sans-serif; }
+              font: var(--fs)/var(--lh) Helvetica, Arial, "Liberation Sans", "Nimbus Sans", sans-serif; }  /* the PDF's fonts */
     .resume:focus { outline: none; }
 
     .resume header { text-align: center; margin-bottom: calc(8pt * var(--gap)); }
@@ -155,8 +157,9 @@
     <span id="fit"></span>
     <button id="score-btn" aria-expanded="false" aria-controls="panel" hidden>Score <b id="score-num">…</b></button>
     <button id="save" hidden>Save edits</button>
-    <button id="print" class="primary">Save as PDF</button>
-    <span class="hint" id="hint">Click the page to edit. In the print dialog choose “Save as PDF” and turn off “Headers and footers”.</span>
+    <button id="print" title="Print, or save as PDF from the print dialog">Print…</button>
+    <a id="download" class="button primary" href="#">Download PDF</a>
+    <span class="hint" id="hint">Click the page to edit. Download PDF saves a one-page file named for this job, ready to upload.</span>
   </div>
   <div class="layout">
     <div class="sheet"><article id="resume" class="resume" contenteditable="true" spellcheck="true"></article></div>
@@ -279,7 +282,7 @@
       if (res.status === 401) return (location.href = "/");
       const doc = await res.json();
       if (!res.ok) throw new Error(doc.error || res.statusText);
-      document.title = doc.title;  // Chrome uses this as the PDF file name
+      document.title = (doc.file_name || doc.title).replace(/\.pdf$/, "");  // Chrome names a printed PDF after this
       document.getElementById("doc-title").textContent = doc.title;
       resume.innerHTML = renderResume(doc.content);
       // A size picked for one resume stays with that resume; every new one starts on Auto-fit.
@@ -309,11 +312,25 @@
       setTimeout(() => { saveBtn.textContent = "Save edits"; saveBtn.hidden = res.ok; }, 1500);
     });
     document.getElementById("print").addEventListener("click", () => window.print());
+    // The PDF is made from the saved resume, so save any edits first.
+    document.getElementById("download").addEventListener("click", async (e) => {
+      e.preventDefault();
+      if (!saveBtn.hidden) {
+        const res = await fetch(`/api/generated/${id}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: toMarkdown(resume) }),
+        });
+        if (!res.ok) return alert("Couldn't save your edits, so the PDF wasn't made. Try again.");
+        saveBtn.hidden = true;
+        loadCheck();
+      }
+      location.href = `/api/generated/${id}/pdf?size=${encodeURIComponent(sizeSelect.value)}`;
+    });
     // Phones open the system print screen, which starts on a printer rather than PDF.
     if (/Android/i.test(navigator.userAgent)) {
-      document.getElementById("hint").textContent = "Tap the page to edit. On the print screen, tap the printer name at the top, choose “Save as PDF”, and keep the paper size at Letter.";
+      document.getElementById("hint").textContent = "Tap the page to edit. Download PDF saves it to Downloads; when an application asks for your resume, it's first under Recent.";
     } else if (/iPhone|iPad/i.test(navigator.userAgent)) {
-      document.getElementById("hint").textContent = "Tap the page to edit. On the print screen, tap Share (↑) and choose “Save to Files” to get the PDF.";
+      document.getElementById("hint").textContent = "Tap the page to edit. Download PDF saves it to Files (Downloads); pick it from there when an application asks for your resume.";
     }
 
     // ---- score panel: keyword match + format (instant), AI fact check + recruiter's view (on request)

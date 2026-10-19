@@ -131,6 +131,7 @@ class MultiUserTest(unittest.TestCase):
             ("GET", f"/api/generated/{gen}", None), ("PUT", f"/api/generated/{gen}", {"content": "hacked"}),
             ("DELETE", f"/api/generated/{gen}", None), ("GET", f"/api/generated/{gen}/check", None),
             ("POST", f"/api/generated/{gen}/review", None),
+            ("GET", f"/api/generated/{gen}/pdf", None),
             ("GET", f"/files/resumes/{res}", None), ("PUT", f"/api/resumes/{res}", {"label": "hacked"}),
             ("DELETE", f"/api/resumes/{res}", None), ("POST", f"/api/resumes/{res}/drive", None),
             ("POST", "/api/jobs", {"company": "Mine", "resume_id": res}),
@@ -284,6 +285,16 @@ class MultiUserTest(unittest.TestCase):
         # Their Claude only ever touches their own profile.
         self.assertNotIn(b"New role", self.admin.call("GET", "/api/profile")["body"])
         self.assert_admin_data_intact()
+
+    def test_tailored_resume_downloads_as_a_named_pdf(self):
+        res = self.admin.call("GET", f"/api/generated/{self.a_gen}/pdf")
+        self.assertEqual(res["status"], 200)
+        self.assertEqual(res["headers"]["Content-Type"], "application/pdf")
+        self.assertIn("attachment; filename*=UTF-8''Admin%20Resume%20-%20SecretCo.pdf",
+                      res["headers"]["Content-Disposition"])
+        self.assertTrue(res["body"].startswith(b"%PDF-1.4"))
+        self.assertEqual(self.admin.call("GET", f"/api/generated/{self.a_gen}")["json"]["file_name"],
+                         "Admin Resume - SecretCo.pdf")
 
     def test_anyone_can_sign_up(self):
         newcomer = Client()
