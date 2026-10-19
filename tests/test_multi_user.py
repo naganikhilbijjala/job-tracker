@@ -375,6 +375,30 @@ class MultiUserTest(unittest.TestCase):
         self.assertEqual(res["status"], 400)
         self.assertNotIn(server.SESSION_COOKIE, victim.cookies)
 
+    def test_sponsorship_tags(self):
+        f = self.friend
+        job = f.call("POST", "/api/jobs", {"company": "NoVisa", "description":
+                                           "Great role.\nWe are unable to sponsor visas at this time."})["json"]
+        self.assertEqual(job["sponsorship"], "no")
+        detail = f.call("GET", f"/api/jobs/{job['id']}")["json"]
+        self.assertIn("unable to sponsor", detail["sponsorship_quote"])
+        # Editing the description re-reads it; other edits leave it alone.
+        f.call("PUT", f"/api/jobs/{job['id']}", {"description": "Visa sponsorship is available."})
+        self.assertEqual(f.call("PUT", f"/api/jobs/{job['id']}", {"notes": "x"})["json"]["sponsorship"], "yes")
+        # Jobs saved before the check existed are read once when the app starts.
+        db, _ = server.store()
+        db.execute("UPDATE jobs SET sponsorship = NULL WHERE id = ?", (job["id"],))
+        server.check_unchecked_jobs(db)
+        self.assertEqual(db.query("SELECT sponsorship FROM jobs WHERE id = ?", (job["id"],))[0]["sponsorship"], "yes")
+        # The extension's pre-save check, and turning the tags off.
+        r = f.call("POST", "/api/sponsorship", {"description": "Must be a U.S. citizen."})["json"]
+        self.assertEqual((r["status"], r["flag"]), ("no", True))
+        f.call("PUT", "/api/settings/sponsorship", {"on": False})
+        self.assertFalse(f.call("GET", "/api/meta")["json"]["flag_sponsorship"])
+        self.assertTrue(self.admin.call("GET", "/api/meta")["json"]["flag_sponsorship"])  # per person
+        f.call("PUT", "/api/settings/sponsorship", {"on": True})
+        self.assertEqual(Client().call("POST", "/api/sponsorship", {"description": "x"})["status"], 401)
+
     def test_forged_or_anonymous_requests(self):
         self.assertEqual(Client().call("GET", "/api/jobs")["status"], 401)
         forged = Client()

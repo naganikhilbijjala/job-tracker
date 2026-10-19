@@ -348,8 +348,21 @@ function renderStats() {
     stats.map(([l, v]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
 }
 
+// What the description says about visa sponsorship (worked out on the server from its wording).
+const SPONSORSHIP = {
+  no: ["bad", "No sponsorship", "The description says it doesn't sponsor visas, or needs citizenship or a clearance"],
+  mixed: ["warn", "Sponsorship unclear", "The description says different things about visa sponsorship"],
+  yes: ["good", "Sponsors visas", "The description says it sponsors visas"],
+};
+
+function sponsorshipChip(j) {
+  const s = state.meta.flag_sponsorship && SPONSORSHIP[j.sponsorship];
+  return s ? `<span class="chip ${s[0]}" title="${s[2]}">${s[1]}</span>` : "";
+}
+
 function cardHTML(j) {
   const meta = [];
+  if (sponsorshipChip(j)) meta.push(sponsorshipChip(j));
   if (j.location) meta.push(`<span>${esc(j.location)}</span>`);
   if (j.date_applied) meta.push(`<span>Applied ${ago(j.date_applied)}</span>`);
   else meta.push(`<span>Saved ${ago(j.created_at)}</span>`);
@@ -411,7 +424,7 @@ function renderTable() {
       `<th data-key="${k}" class="${k === key ? "sorted" + (dir > 0 ? " asc" : "") : ""}">${l}</th>`).join("")}</tr></thead>
     <tbody>${jobs.map((j) => `<tr data-id="${j.id}">
       ${cell("Company", `<span>${avatarHTML(j.company, "sm")}<b>${esc(j.company)}</b></span>`, "company")}
-      ${cell("Title", esc(j.title), "wrap title")}
+      ${cell("Title", esc(j.title) + (sponsorshipChip(j) ? " " + sponsorshipChip(j) : ""), "wrap title")}
       ${cell("Status", `<select class="status-pill" style="--c:var(--s-${j.status})" data-status-for="${j.id}" aria-label="Status">${statusOptions(j.status)}</select>`, "status")}
       ${cell("Applied", fmtDate(j.date_applied))}
       ${cell("Follow up", followUpDue(j) ? `<span class="chip warn">${fmtDate(j.follow_up)}</span>` : fmtDate(j.follow_up))}
@@ -514,6 +527,7 @@ async function openDrawer(id = null, prefill = {}) {
     form[k].value = job[k] ?? "";
   }
   fillResumeSelect(job.resume_id);
+  showSponsorship(job.sponsorship, job.sponsorship_quote);
   $("#drawer-title").textContent = id ? (job.company ? `${job.title} · ${job.company}` : "Edit job") : "Add job";
   $("#delete-job").hidden = !id;
   syncOpenLink();
@@ -528,6 +542,29 @@ async function openDrawer(id = null, prefill = {}) {
   $("#drawer").setAttribute("aria-hidden", "false");
   if (!matchMedia("(pointer: coarse)").matches) (id ? form.title : form.url).focus();
 }
+
+function showSponsorship(status, quote) {
+  const note = $("#sponsorship-note");
+  const s = state.meta.flag_sponsorship && SPONSORSHIP[status];
+  note.hidden = !s;
+  if (!s) return;
+  note.className = `spons-note ${s[0]}`;
+  note.innerHTML = `<b>${s[0] === "bad" ? "⚠ " : s[0] === "good" ? "✓ " : ""}${s[1]}</b>${quote ? `<q>${esc(quote)}</q>` : ""}`;
+}
+
+// Check the description as it's pasted or auto-filled, so you know before saving.
+let sponsorshipTimer;
+function recheckSponsorship() {
+  clearTimeout(sponsorshipTimer);
+  if (!state.meta.flag_sponsorship) return;
+  sponsorshipTimer = setTimeout(async () => {
+    try {
+      const r = await api("/api/sponsorship", { method: "POST", json: { description: form.description.value } });
+      showSponsorship(r.status, r.quote);
+    } catch { /* the note is a nicety; saving still works */ }
+  }, 400);
+}
+form.description.addEventListener("input", recheckSponsorship);
 
 function closeDrawer() {
   $("#drawer").classList.remove("open");
@@ -553,6 +590,7 @@ async function autofill() {
     for (const [k, v] of Object.entries(data)) {
       if (form[k] && v && (!form[k].value || k === "url")) form[k].value = v;
     }
+    recheckSponsorship();
     toast(data.description ? "Filled in from the posting" : "Got the basics — paste the description manually if it's missing");
     syncOpenLink();
   } catch (e) {
@@ -573,7 +611,11 @@ form.addEventListener("submit", async (ev) => {
     upsertJob(job);
     closeDrawer();
     render();
-    toast("Saved");
+    if (state.meta.flag_sponsorship && job.sponsorship === "no") {
+      toast(`Saved. Heads up: ${job.company || "this job"} says it doesn't sponsor visas.`, true);
+    } else {
+      toast("Saved");
+    }
   } catch (e) {
     toast(e.message, true);
   }
@@ -1357,9 +1399,21 @@ function sharedJob() {
   return url ? { url } : null;
 }
 
+$("#flag-sponsorship").addEventListener("change", async (e) => {
+  try {
+    const { on } = await api("/api/settings/sponsorship", { method: "PUT", json: { on: e.target.checked } });
+    state.meta.flag_sponsorship = on;
+    toast(on ? "Jobs will show what they say about sponsorship" : "Sponsorship tags hidden");
+  } catch (err) {
+    e.target.checked = !e.target.checked;
+    toast(err.message, true);
+  }
+});
+
 async function boot() {
   state.meta = await api("/api/meta");
   if (state.meta.auth.required && !state.meta.auth.ok) return showLogin();
+  $("#flag-sponsorship").checked = !!state.meta.flag_sponsorship;
   $("#login").hidden = true;
   $("#landing").hidden = true;
   $("#app").hidden = false;

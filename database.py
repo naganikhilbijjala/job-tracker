@@ -107,6 +107,11 @@ def _migrate(db):
         except Exception as e:  # sqlite3 and Turso both say "duplicate column name"
             if "duplicate column" not in str(e).lower():
                 raise
+    try:  # what the posting says about visa sponsorship (see sponsorship.py); NULL until checked
+        db.execute("ALTER TABLE jobs ADD COLUMN sponsorship TEXT")
+    except Exception as e:
+        if "duplicate column" not in str(e).lower():
+            raise
     marks = ", ".join("?" * len(USER_SETTING_KEYS))
     db.run_many([
         *[(f"CREATE INDEX IF NOT EXISTS {t}_user ON {t}(user_id)", ()) for t in OWNED_TABLES],

@@ -9,6 +9,7 @@ A job application tracker, similar to Teal. You can run it on your computer or h
 - Saves the **job description** with each job, so you still have it after the posting is taken down.
 - Records **which resume** you sent to each job. Keeps a resume library, with optional **Google Drive** backup.
 - Sets the applied date and a 7-day **follow-up reminder** when you mark a job Applied.
+- **Visa sponsorship check**: reads each job description and tags jobs that say they don't sponsor visas (or need citizenship or a security clearance), so you can skip them. The job's panel quotes the sentence, and the extension warns you before you save. Turn it off on the Profile tab if you don't need sponsorship.
 - **✨ AI assistant** on each job: tailored resumes (saved as PDF), skills lists, and answers for application forms, using your choice of AI provider. Each tailored resume gets a **score**: keyword match with the job, format checks, and an AI fact check against your profile. Plus an **MCP connection** so Claude can use your tracker directly.
 - **Auto-fill** from a pasted link, a **browser extension** that saves a job in one click, and on Android, **Share → ApplyStack** from LinkedIn or any other app.
 - CSV export.
@@ -182,6 +183,7 @@ This project is open source under the [MIT License](LICENSE). Bug reports, ideas
 | `gdrive.py` | Google sign-in, plus Drive OAuth + upload |
 | `ai.py` | AI providers (Anthropic + OpenAI-compatible), the assistant's prompt, and the AI resume review |
 | `scoring.py` | Resume score: keyword match with the job description and format checks (no AI) |
+| `sponsorship.py` | Reads what a job description says about visa sponsorship (no AI) |
 | `autofill.py` | Matching application-form questions to profile facts and saved answers |
 | `mcp.py`, `mcp_bridge.py` | MCP server for Claude, and the Claude Desktop bridge |
 | `public/` | The web pages, icons, and home-screen app manifest |

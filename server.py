@@ -37,6 +37,7 @@ import gdrive
 import mcp
 import pdf
 import scoring
+import sponsorship
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "public"
@@ -103,7 +104,16 @@ def store():
     with _backend_lock:
         if _backend is None:
             _backend = database.open_backend(DATA)
+            check_unchecked_jobs(_backend[0])
         return _backend
+
+
+def check_unchecked_jobs(db):
+    """Read the sponsorship wording of jobs saved before this check existed (once each)."""
+    rows = db.query("SELECT id, description FROM jobs WHERE sponsorship IS NULL")
+    if rows:
+        db.run_many([("UPDATE jobs SET sponsorship = ? WHERE id = ?",
+                      (sponsorship.check(r["description"])["status"], r["id"])) for r in rows])
 
 
 def backend():
@@ -123,7 +133,7 @@ def log_event(job_id, kind, detail=""):
 JOB_LIST_SQL = """
 SELECT j.id, j.company, j.title, j.location, j.url, j.source, j.salary, j.status,
        j.notes, j.resume_id, r.label AS resume_label, j.date_applied, j.follow_up,
-       j.created_at, j.updated_at, length(j.description) AS desc_len
+       j.created_at, j.updated_at, length(j.description) AS desc_len, j.sponsorship
 FROM jobs j LEFT JOIN resumes r ON r.id = j.resume_id AND r.user_id = j.user_id
 WHERE j.user_id = ?
 """
@@ -219,6 +229,7 @@ def insert_job(db, fields):
         fields["source"] = urllib.parse.urlsplit(fields["url"]).netloc.removeprefix("www.")
     check_resume_owner(db, fields)
     status_side_effects(fields, None)
+    fields["sponsorship"] = sponsorship.check(fields.get("description"))["status"]
     fields["user_id"] = db.uid
     fields["created_at"] = fields["updated_at"] = now()
     cols = ", ".join(fields)
@@ -234,6 +245,8 @@ def update_job(db, job_id, fields):
     status_side_effects(fields, old)
     if not fields:
         return
+    if "description" in fields:
+        fields["sponsorship"] = sponsorship.check(fields["description"])["status"]
     fields["updated_at"] = now()
     sets = ", ".join(f"{k} = ?" for k in fields)
     statements = [(f"UPDATE jobs SET {sets} WHERE id = ? AND user_id = ?", [*fields.values(), job_id, db.uid])]
@@ -968,6 +981,7 @@ def meta(req):
         "resume_dir": str(files.folder) if files.kind == "folder" and db.uid == ADMIN_ID else None,
         "drive": {"configured": gdrive.is_configured(), "connected": gdrive.is_connected(db),
                   "folder_link": gdrive.cached_folder_link(db)},
+        "flag_sponsorship": db.get_setting("flag_sponsorship") != "off",
     })
 
 
@@ -992,7 +1006,22 @@ def jobs_get(req, job_id):
     db, _ = backend()
     job = find_job(db, job_id)
     events = db.query("SELECT at, kind, detail FROM events WHERE job_id = ? ORDER BY at DESC, id DESC", (job_id,))
-    return json_response({**job, "events": events})
+    return json_response({**job, "events": events, "sponsorship_quote": sponsorship.check(job["description"])["quote"]})
+
+
+@route("POST", r"/api/sponsorship")
+def sponsorship_check(req):
+    """What a description says about visa sponsorship, for the extension before it saves a job."""
+    db, _ = backend()
+    return json_response({**sponsorship.check(str(req.json().get("description", ""))),
+                          "flag": db.get_setting("flag_sponsorship") != "off"})
+
+
+@route("PUT", r"/api/settings/sponsorship")
+def sponsorship_setting(req):
+    db, _ = backend()
+    db.set_setting("flag_sponsorship", None if req.json().get("on", True) else "off")
+    return json_response({"on": db.get_setting("flag_sponsorship") != "off"})
 
 
 @route("POST", r"/api/jobs")

@@ -262,6 +262,13 @@
           </div>
           <div class="side">
             <aside id="ai-panel" class="panel"></aside>
+            <aside class="panel">
+              <h3>Visa sponsorship</h3>
+              <label class="check"><input type="checkbox" id="flag-sponsorship"> Flag what each job says about sponsorship</label>
+              <p class="muted small">Jobs whose description says they don't sponsor visas (or need citizenship or a
+                clearance) get a red <b>No sponsorship</b> tag, so you can skip them. Based on the description's wording;
+                jobs that don't mention it aren't tagged.</p>
+            </aside>
             <aside id="answers-panel" class="panel"></aside>
             <aside id="mcp-panel" class="panel"></aside>
           </div>
@@ -314,6 +321,7 @@
           </div>
         </label>
         <label class="field">Notes<textarea name="notes" rows="4" placeholder="Recruiter name, referral, interview prep…"></textarea></label>
+        <div id="sponsorship-note" class="spons-note" hidden></div>
         <label class="field">Job description<textarea name="description" rows="12" placeholder="Saved so you still have it after the posting comes down"></textarea></label>
         <div id="timeline"></div>
       </div>

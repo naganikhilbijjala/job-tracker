@@ -165,10 +165,29 @@ async function init() {
       }), true);
     } catch { /* keep whatever the page gave us */ }
   }
+  checkSponsorship();
   if (existing) {
     show(msg, `Already tracked as <b>${existing.status}</b>${existing.date_applied ? ` (applied ${existing.date_applied})` : ""}. Saving will fill in anything missing.`);
     if (existing.resume_id) form.resume_id.value = existing.resume_id;
   }
+}
+
+// Tell you before saving if the posting says it won't sponsor a visa (the tracker reads the wording).
+async function checkSponsorship() {
+  const el = document.getElementById("spons");
+  if (!form.description.value) return;
+  try {
+    const r = await api("/api/sponsorship", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: form.description.value }),
+    });
+    const label = { no: "⚠ This job says it doesn't sponsor visas", mixed: "This job says different things about visa sponsorship",
+                    yes: "✓ This job says it sponsors visas" }[r.status];
+    if (!r.flag || !label) return;
+    el.className = `msg ${r.status === "mixed" ? "" : r.status}`;
+    el.innerHTML = `<b>${label}</b>${r.quote ? `<q>${r.quote.replace(/[<>&"]/g, "")}</q>` : ""}`;
+    el.hidden = false;
+  } catch { /* older trackers don't have this check */ }
 }
 
 document.getElementById("statuses").addEventListener("click", (e) => {

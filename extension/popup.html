@@ -30,6 +30,9 @@
     .msg { padding: 8px 10px; border-radius: 7px; background: var(--surface-2); margin-bottom: 10px; font-size: 12px; }
     .msg.ok { color: var(--ok); }
     .msg.err { color: var(--danger); }
+    #spons.no { background: color-mix(in srgb, var(--danger) 12%, var(--bg)); color: var(--danger); }
+    #spons.yes { color: var(--ok); }
+    #spons q { display: block; margin-top: 3px; color: var(--text); font-style: italic; }
     .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
     #apply { margin: 12px 14px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
     #apply .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
@@ -70,6 +73,7 @@
   </section>
   <form id="f" hidden>
     <div id="msg" class="msg" hidden></div>
+    <div id="spons" class="msg" hidden></div>
     <div class="statuses" id="statuses">
       <button type="button" data-status="saved">Saved</button>
       <button type="button" data-status="applied">Applied</button>
