@@ -233,6 +233,8 @@ main { padding: 14px 20px 40px; }
 .spons-note q { display: block; margin-top: 3px; color: var(--text); font-style: italic; }
 .spons-note.bad { background: color-mix(in srgb, var(--danger) 10%, var(--surface)); color: var(--danger); }
 .spons-note.warn { background: var(--warn-bg); color: var(--warn-text); }
+.spons-note.none { background: var(--surface-2); color: var(--muted); }
+.spons-note.none b { color: var(--text); font-weight: 600; }
 .spons-note.good { background: color-mix(in srgb, var(--s-offer) 11%, var(--surface)); color: var(--s-offer); }
 label.check { display: flex; gap: 8px; align-items: center; font-size: 14px; margin: 4px 0 6px; cursor: pointer; }
 label.check input { width: auto; margin: 0; }

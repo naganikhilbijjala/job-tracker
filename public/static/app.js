@@ -545,9 +545,16 @@ async function openDrawer(id = null, prefill = {}) {
 
 function showSponsorship(status, quote) {
   const note = $("#sponsorship-note");
-  const s = state.meta.flag_sponsorship && SPONSORSHIP[status];
-  note.hidden = !s;
-  if (!s) return;
+  note.hidden = !state.meta.flag_sponsorship;
+  if (note.hidden) return;
+  const s = SPONSORSHIP[status];
+  if (!s) {  // say so, rather than show nothing: most postings don't mention sponsorship at all
+    note.className = "spons-note none";
+    note.innerHTML = form.description.value.trim()
+      ? "<b>Visa sponsorship: not mentioned</b> in this description. Worth asking the recruiter."
+      : "<b>Visa sponsorship:</b> paste the job description to check it.";
+    return;
+  }
   note.className = `spons-note ${s[0]}`;
   note.innerHTML = `<b>${s[0] === "bad" ? "⚠ " : s[0] === "good" ? "✓ " : ""}${s[1]}</b>${quote ? `<q>${esc(quote)}</q>` : ""}`;
 }
