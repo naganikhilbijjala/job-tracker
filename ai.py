@@ -239,7 +239,7 @@ RESUME_FORMAT = """Resume format (Markdown, single column, no tables or images, 
 City, ST | phone | email | [LinkedIn](https://full-url) | [GitHub](https://full-url)
 
 ## Summary
-Two or three sentences aimed at this job.
+Two or three sentences about the candidate: what they do, years of experience, the skills from their profile that matter most for this job, and one concrete achievement.
 
 ## Skills
 - **Category:** skill, skill, skill
@@ -256,6 +256,8 @@ Two or three sentences aimed at this job.
 ## Projects
 ### Project Name | Tech, Tech
 - What it does and the result
+
+Write like a person, not like marketing copy: plain, specific wording and real numbers. The summary describes the candidate; it never names the company or the job being applied to, and never states a goal ("seeking", "looking to", "eager to contribute to"): recruiters read both as AI-written. Avoid clichés such as "proven/strong track record", "results-driven", "passionate", "leverage", "spearheaded", "synergy", "cutting-edge", "seamless" and "user-focused solutions". Use ordinary hyphens (-), not special dash or hyphen characters, except the en dash in date ranges.
 
 Rules: the resume is sent to employers exactly as written, so it holds only the resume itself: never notes, explanations, or a summary of what you changed or emphasized (put those outside, after it). Use exactly these heading levels and the " | " separators; "Present" for current roles; most recent first; only include contact details and links that appear in the profile (write full URLs); skip sections the profile has nothing for; aim for one page, about 3–5 bullets for recent roles and fewer for older ones. The resume page scales the text (9–11 pt) and spacing to fill exactly one page, so when asked to make it fit, or told it is some number of lines over or under, change about that many lines and no more."""
 
@@ -274,10 +276,37 @@ _COMMENTARY = re.compile(
 _STRUCTURE = re.compile(r"^\s*(?:#{1,3}\s|[-*•]\s|\*\*.+\*\*|.+\s\|\s.+)")
 
 
-def clean_resume(text):
+# A summary sentence that states a goal is an outdated objective statement, and reads as AI-written.
+_OBJECTIVE = re.compile(r"^(?:i am |i'm )?(?:seeking|looking|eager|excited|hoping|aiming|keen|ready|motivated)\b"
+                        r"|\b(?:seeking|looking|eager|excited|hoping) to (?:join|contribute|bring|apply|help|leverage)\b", re.I)
+_SUMMARY_HEADING = re.compile(r"^##\s+(?:summary|profile|professional summary|overview|about(?: me)?)\s*$", re.I)
+
+
+def _clean_summary(lines, company):
+    """Drop summary sentences that name the target company or state an objective."""
+    name = re.sub(r"[,.]?\s+(?:inc|llc|ltd|corp|co|gmbh|plc)\.?$", "", (company or "").strip(), flags=re.I)
+    # Case-sensitive, so a company named after a word (Scale, Block, Ramp) doesn't catch "systems that scale".
+    mentions = re.compile(rf"\b{re.escape(name)}(?:'s|’s)?\b") if len(name) >= 2 else None
+    in_summary = False
+    for i, line in enumerate(lines):
+        if line.startswith("#"):
+            in_summary = bool(_SUMMARY_HEADING.match(line))
+            continue
+        if not in_summary or not line.strip() or _STRUCTURE.match(line):
+            continue
+        sentences = re.split(r"(?<=[.!?])\s+", line.strip())
+        kept = [x for x in sentences if not _OBJECTIVE.search(x) and not (mentions and mentions.search(x))]
+        if kept and len(kept) < len(sentences):  # never empty the summary entirely
+            lines[i] = " ".join(kept)
+    return lines
+
+
+def clean_resume(text, company=""):
     """The resume alone: drops a model's commentary before the name heading or after the last section,
-    stray code fences, and note/quote lines. Lines that are part of the resume are never touched."""
-    lines = [l for l in str(text or "").replace("\r\n", "\n").split("\n")
+    stray code fences and note/quote lines, summary sentences naming the target company or stating an
+    objective, and unusual hyphen characters. Headings, bullets and "Title | Dates" rows are never removed."""
+    text = re.sub("[\u2010\u2011\u2012]", "-", str(text or "")).replace("\u00a0", " ")
+    lines = [l for l in text.replace("\r\n", "\n").split("\n")
              if not re.match(r"^\s*```", l)                              # stray fences
              and not re.match(r"^\s*>", l)                               # blockquotes (never in a resume)
              and not re.match(r"^\s*[*_(]*\s*notes?\s*[:*]", l, re.I)]  # "Note: …", "**Note:** …"
@@ -298,6 +327,7 @@ def clean_resume(text):
             break
     while lines and re.fullmatch(r"\s*(?:-{3,}|\*{3,}|_{3,})?\s*", lines[-1]):  # trailing rules and blanks
         lines.pop()
+    lines = _clean_summary(lines, company)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 

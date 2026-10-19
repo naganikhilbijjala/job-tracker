@@ -72,5 +72,43 @@ class CleanResumeTest(unittest.TestCase):
                 self.assertEqual(clean_resume(text), text)
 
 
+class SummaryTest(unittest.TestCase):
+    SUMMARY = ("Full\u2011stack software engineer with 5+ years of experience building React/Next.js front\u2011ends "
+               "and Node.js/TypeScript back\u2011ends. Strong track record of owning features end\u2011to\u2011end. "
+               "Seeking to contribute to Haystack\u2019s AI\u2011powered commerce platform.")
+
+    def resume(self, summary):
+        return (f"# Sam Lee\nsam@example.com\n\n## Summary\n{summary}\n\n## Experience\n### Acme | NYC\n"
+                "**Engineer** | 2020 \u2013 Present\n- Built the Haystack integration for search")
+
+    def test_drops_the_company_and_objective_sentence(self):
+        out = clean_resume(self.resume(self.SUMMARY), "Haystack Inc.")
+        self.assertNotIn("Seeking", out)
+        self.assertIn("Full-stack software engineer", out)  # ordinary hyphens…
+        self.assertIn("2020 \u2013 Present", out)  # …but the date's en dash stays
+        self.assertIn("Built the Haystack integration", out)  # bullets are never touched
+
+    def test_objective_phrasings(self):
+        for line in ["Eager to bring these skills to a fast-growing team.", "Looking to join a mission-driven company.",
+                     "Excited to help Stripe scale its payments platform."]:
+            with self.subTest(line=line):
+                out = clean_resume(self.resume("Backend engineer with 6 years of Python. " + line), "Stripe")
+                self.assertIn("Backend engineer with 6 years of Python.", out)
+                self.assertNotIn(line, out)
+
+    def test_company_named_only_in_summary_sentence_is_removed(self):
+        out = clean_resume(self.resume("Backend engineer with 6 years of Python. Excellent fit for Stripe's platform team."),
+                           "Stripe")
+        self.assertNotIn("Stripe", out.split("## Experience")[0])
+
+    def test_company_named_after_a_word(self):
+        summary = "Backend engineer who builds systems that scale to millions of users. Led a team of 5."
+        self.assertIn(summary, clean_resume(self.resume(summary), "Scale"))
+
+    def test_summary_is_never_emptied(self):
+        only = "Seeking a backend role at Stripe."
+        self.assertIn(only, clean_resume(self.resume(only), "Stripe"))
+
+
 if __name__ == "__main__":
     unittest.main()

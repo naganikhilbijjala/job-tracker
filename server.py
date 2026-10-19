@@ -1599,7 +1599,7 @@ def chat_clear(req, job_id):
 
 def save_generated(db, job_id, content, title="", source="app"):
     job = find_job(db, job_id) if job_id else None
-    content = ai.clean_resume(content)  # only the resume: no notes from the AI about it
+    content = ai.clean_resume(content, job["company"] if job else "")  # only the resume, no AI notes
     if not content:
         raise ApiError(400, "The resume is empty")
     if not title:
@@ -1684,7 +1684,12 @@ def find_generated(db, gid):
     if not rows:
         raise ApiError(404, "Resume not found")
     # Resumes saved before clean_resume existed may still hold the AI's notes; never show or print them.
-    return {**rows[0], "content": ai.clean_resume(rows[0]["content"])}
+    return {**rows[0], "content": ai.clean_resume(rows[0]["content"], job_company(db, rows[0]["job_id"]))}
+
+
+def job_company(db, job_id):
+    rows = db.query("SELECT company FROM jobs WHERE id = ? AND user_id = ?", (job_id, db.uid)) if job_id else []
+    return rows[0]["company"] if rows else ""
 
 
 def content_hash(content):
@@ -1809,7 +1814,7 @@ def mcp_tools(db, origin):
         rows = db.query("SELECT * FROM generated_resumes WHERE id = ? AND user_id = ?", (resume_id, db.uid))
         if not rows:
             raise mcp.ToolError(f"No tailored resume with id {resume_id}")
-        return {**rows[0], "content": ai.clean_resume(rows[0]["content"])}
+        return {**rows[0], "content": ai.clean_resume(rows[0]["content"], job_company(db, rows[0]["job_id"]))}
 
     def check_summary(gid):
         report = check_resume(db, find_generated(db, gid))
@@ -1840,7 +1845,8 @@ def mcp_tools(db, origin):
     def update_tailored_resume(resume_id, content):
         if not db.query("SELECT 1 FROM generated_resumes WHERE id = ? AND user_id = ?", (resume_id, db.uid)):
             raise mcp.ToolError(f"No tailored resume with id {resume_id}")
-        content = ai.clean_resume(content)
+        job_id = db.query("SELECT job_id FROM generated_resumes WHERE id = ?", (resume_id,))[0]["job_id"]
+        content = ai.clean_resume(content, job_company(db, job_id))
         if not content:
             raise mcp.ToolError("content is empty")
         db.execute("UPDATE generated_resumes SET content = ? WHERE id = ? AND user_id = ?",
