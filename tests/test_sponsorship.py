@@ -10,6 +10,7 @@ from sponsorship import check  # noqa: E402
 NO = [
     "We are unable to sponsor or take over sponsorship of an employment visa at this time.",
     "This position is not eligible for visa sponsorship.",
+    "The position is also not eligible for work authorization sponsorship.",  # Royal Caribbean Group
     "Applicants must be authorized to work in the U.S. without the need for employer sponsorship now or in the future.",
     "No visa sponsorship is available for this role.",
     "No H-1B sponsorship.",
