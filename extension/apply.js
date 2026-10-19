@@ -119,7 +119,7 @@ rememberList.addEventListener("click", async (e) => {
   try {
     const { saved } = await postJSON("/api/answers", { items });
     rememberList.hidden = true;
-    show(applyMsg, `Saved ${plural(saved, "answer")} ✓ They'll fill in on the next form. Edit them on the tracker's Profile tab.`, "ok");
+    show(applyMsg, `Saved ${plural(saved, "answer")} ✓ They'll fill in on the next form. Edit them on ApplyStack's Profile tab.`, "ok");
   } catch (err) {
     e.target.disabled = false;
     applyError(err);

@@ -367,7 +367,7 @@ function cardHTML(j) {
 
 // Shown above the board until the first job is added.
 const WELCOME = `<div class="welcome">
-  <div><h2>Welcome to your job tracker</h2>
+  <div><h2>Welcome to ApplyStack</h2>
     <p>Add the jobs you're applying to and follow each one from saved to offer.</p>
     <button type="button" class="primary" id="welcome-add">+ Add your first job</button></div>
   <ol>
@@ -431,7 +431,7 @@ function renderResumes() {
   const { drive, storage, resume_dir, origin } = state.meta;
   const hosted = storage === "database";
   $("#storage-note").innerHTML = hosted || !resume_dir
-    ? "Resumes are stored in your tracker's database. Connect Google Drive to also keep copies in a Drive folder."
+    ? "Resumes are stored in your ApplyStack database. Connect Google Drive to also keep copies in a Drive folder."
     : `Files live in <code>${esc(resume_dir)}</code>. Anything you copy into that folder shows up here automatically.`;
   $("#resume-list").innerHTML = state.resumes.map((r) => {
     const fileUrl = `/files/resumes/${r.id}/${encodeURIComponent(r.filename)}`;
@@ -468,7 +468,7 @@ function renderResumes() {
        </div>`
     : drive.configured
       ? `<h3>Google Drive</h3>
-         <p class="muted">Back up your resumes to a “Job Tracker Resumes” folder in your Drive. Free — the app can only see files it creates.</p>
+         <p class="muted">Back up your resumes to an “ApplyStack Resumes” folder in your Drive. Free — the app can only see files it creates.</p>
          <div class="row"><a class="btn primary" href="/drive/connect">Connect Google Drive</a></div>`
       : `<h3>Google Drive backup (optional, free)</h3>
          <p class="muted">One-time setup, about 5 minutes:</p>
@@ -486,7 +486,7 @@ function renderResumes() {
        <code class="copy">${esc(origin)}</code>
        <div id="ext-code" class="row"><button id="make-code">Get connection code</button></div>`
     : `<h3>Browser extension</h3>
-       <p class="muted small">In the extension's setup, use this address${state.meta.auth.required ? " and your tracker password" : ""}:</p>
+       <p class="muted small">In the extension's setup, use this address${state.meta.auth.required ? " and your ApplyStack password" : ""}:</p>
        <code class="copy">${esc(origin)}</code>`;
 }
 
@@ -865,7 +865,7 @@ function renderAiPanel(config) {
     .map(([k, p]) => `<option value="${k}" ${k === config.provider ? "selected" : ""}>${esc(p.label)}</option>`).join("");
   $("#ai-panel").innerHTML = `
     <h3>AI provider</h3>
-    <p class="muted small">Used by the ✨ Assistant in each job. You pay the provider directly; keys are stored in your tracker's database and never sent back to the browser.</p>
+    <p class="muted small">Used by the ✨ Assistant in each job. You pay the provider directly; keys are stored in your ApplyStack database and never sent back to the browser.</p>
     <form id="ai-form">
       <label class="field">Provider<select name="provider">${options}</select></label>
       <label class="field">API key <a id="key-link" class="key-link small" target="_blank" rel="noopener">Get a key ↗</a>
@@ -1028,13 +1028,13 @@ document.addEventListener("submit", async (e) => {
 function renderMcpPanel({ url, token }) {
   // Running locally we know the project folder; on Vercel the user fills it in.
   const folder = state.meta.resume_dir ? state.meta.resume_dir.replace(/\/data\/resumes$/, "") : "/path/to/job-tracker";
-  const desktop = JSON.stringify({ mcpServers: { "job-tracker": {
+  const desktop = JSON.stringify({ mcpServers: { "applystack": {
     command: "python3", args: [`${folder}/mcp_bridge.py`, url, token] } } }, null, 2);
   $("#mcp-panel").innerHTML = `
     <h3>Use with Claude (MCP)</h3>
-    <p class="muted small">Lets Claude read your jobs, saved descriptions, profile and tailored resumes, and save new resumes here. Anyone with this token can read and edit your tracker, so keep it private.</p>
+    <p class="muted small">Lets Claude read your jobs, saved descriptions, profile and tailored resumes, and save new resumes here. Anyone with this token can read and edit your ApplyStack, so keep it private.</p>
     <details><summary><b>Claude Code</b></summary>
-      <code class="copy">claude mcp add --transport http job-tracker ${esc(url)} --header "Authorization: Bearer ${esc(token)}"</code></details>
+      <code class="copy">claude mcp add --scope user --transport http applystack ${esc(url)} --header "Authorization: Bearer ${esc(token)}"</code></details>
     <details><summary><b>claude.ai</b> (Settings → Connectors → Add custom connector)</summary>
       <code class="copy">${esc(url)}?key=${esc(token)}</code></details>
     <details><summary><b>Claude Desktop</b> (Settings → Developer → Edit config)</summary>

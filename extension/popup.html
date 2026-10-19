@@ -51,13 +51,13 @@
   </style>
 </head>
 <body>
-  <header><b>Save job</b><span><a id="settings" href="#">Settings</a> · <a id="open-tracker" href="#">Open tracker ↗</a></span></header>
+  <header><b>Save job</b><span><a id="settings" href="#">Settings</a> · <a id="open-tracker" href="#">Open ApplyStack ↗</a></span></header>
   <form id="setup" hidden>
     <div id="setup-msg" class="msg" hidden></div>
-    <label>Tracker address<input name="server" placeholder="https://your-tracker.vercel.app" required></label>
-    <label>Password or connection code<input name="password" type="password" placeholder="Leave empty for a local tracker without one"></label>
+    <label>ApplyStack address<input name="server" placeholder="https://www.applystack.app" required></label>
+    <label>Password or connection code<input name="password" type="password" placeholder="Leave empty for a local copy without one"></label>
     <button id="connect" class="primary" type="submit">Connect</button>
-    <div class="hint">The address, and a connection code if you sign in with Google, are on the tracker's Resumes tab.</div>
+    <div class="hint">The address, and a connection code if you sign in with Google, are on ApplyStack's Resumes tab.</div>
   </form>
   <section id="apply" hidden>
     <div class="head"><b>Application form</b><span id="apply-count"></span></div>
@@ -90,7 +90,7 @@
       <textarea name="description" rows="8"></textarea>
     </details>
     <input type="hidden" name="url"><input type="hidden" name="source">
-    <button id="save" type="submit">Save to tracker</button>
+    <button id="save" type="submit">Save to ApplyStack</button>
     <div class="hint">Tip: if the description is wrong, highlight it on the page and reopen this popup.</div>
   </form>
   <script src="popup.js"></script>

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Connect Claude Desktop to your Job Tracker.
+"""Connect Claude Desktop to ApplyStack.
 
 Claude Desktop starts local MCP servers and talks to them over stdin/stdout; this
 script forwards those messages to the tracker's /mcp endpoint.
 
-    python3 mcp_bridge.py https://your-tracker.vercel.app/mcp YOUR_MCP_TOKEN
+    python3 mcp_bridge.py https://www.applystack.app/mcp YOUR_MCP_TOKEN
 
 (The Profile tab shows the exact Claude Desktop config to paste.)
 """
@@ -36,7 +36,7 @@ def main():
             detail = e.read().decode("utf-8", "replace")[:300] if isinstance(e, urllib.error.HTTPError) else str(e)
             if isinstance(message, dict) and "id" in message:
                 body = json.dumps({"jsonrpc": "2.0", "id": message["id"],
-                                   "error": {"code": -32000, "message": f"Job Tracker: {detail}"}})
+                                   "error": {"code": -32000, "message": f"ApplyStack: {detail}"}})
             else:
                 continue
         if body:

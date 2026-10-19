@@ -1,4 +1,6 @@
-# Job Tracker
+# ApplyStack
+
+Use it at **[applystack.app](https://applystack.app)**: sign in with Google, free.
 
 A job application tracker, similar to Teal. You can run it on your computer or host it for free on Vercel, so you can use it from your phone and any other device.
 
@@ -8,7 +10,7 @@ A job application tracker, similar to Teal. You can run it on your computer or h
 - Records **which resume** you sent to each job. Keeps a resume library, with optional **Google Drive** backup.
 - Sets the applied date and a 7-day **follow-up reminder** when you mark a job Applied.
 - **✨ AI assistant** on each job: tailored resumes (saved as PDF), skills lists, and answers for application forms, using your choice of AI provider. Each tailored resume gets a **score**: keyword match with the job, format checks, and an AI fact check against your profile. Plus an **MCP connection** so Claude can use your tracker directly.
-- **Auto-fill** from a pasted link, a **browser extension** that saves a job in one click, and on Android, **Share → Job Tracker** from LinkedIn or any other app.
+- **Auto-fill** from a pasted link, a **browser extension** that saves a job in one click, and on Android, **Share → ApplyStack** from LinkedIn or any other app.
 - CSV export.
 
 It uses only the Python standard library, with no packages to install.
@@ -54,7 +56,7 @@ From then on, every `git push` redeploys automatically. Your data stays in Turso
 ### 4. On your phone
 Open your Vercel address and log in. You stay logged in for 6 months. Then:
 - **iPhone (Safari):** Share → **Add to Home Screen**.
-- **Android (Chrome):** ⋮ → **Add to Home screen** / **Install app**. After that, **Job Tracker appears in the Share menu**: in the LinkedIn app, tap Share on a job → Job Tracker, and it opens with the job auto-filled.
+- **Android (Chrome):** ⋮ → **Add to Home screen** / **Install app**. After that, **ApplyStack appears in the Share menu**: in the LinkedIn app, tap Share on a job → ApplyStack, and it opens with the job auto-filled.
 
 ---
 
@@ -100,7 +102,7 @@ The **paste-a-link** auto-fill in the app itself works for Greenhouse, Lever, As
 
 At your computer, you can use Claude itself with full access to your tracker: jobs, saved descriptions, profile, and past tailored resumes. Claude can also save new resumes back to the tracker. The **Profile tab** shows your connection token and copy-ready setup for each app:
 
-- **Claude Code:** `claude mcp add --transport http job-tracker https://YOUR-APP.vercel.app/mcp --header "Authorization: Bearer TOKEN"`
+- **Claude Code:** `claude mcp add --scope user --transport http applystack https://YOUR-APP.vercel.app/mcp --header "Authorization: Bearer TOKEN"`
 - **claude.ai:** Settings → Connectors → Add custom connector → `https://YOUR-APP.vercel.app/mcp?key=TOKEN`
 - **Claude Desktop:** add the JSON config from the Profile tab. It runs `mcp_bridge.py` from this folder.
 
@@ -117,7 +119,7 @@ Then ask, for example: *"Tailor my resume for the AssemblyAI job in my tracker a
    - **Local:** choose **Desktop app**, download the JSON, and save it as `data/client_secret.json`.
 4. Click **Connect Google Drive** on the Resumes tab.
 
-Every resume you upload is then also copied to a **"Job Tracker Resumes"** folder in your Drive. The app uses the `drive.file` permission, so it can only see files it created. While the consent screen is in "Testing" mode, Google expires the connection every 7 days. To avoid that, click **Publish app** on the consent screen; an app that only you use doesn't need Google's review.
+Every resume you upload is then also copied to an **"ApplyStack Resumes"** folder in your Drive. The app uses the `drive.file` permission, so it can only see files it created. While the consent screen is in "Testing" mode, Google expires the connection every 7 days. To avoid that, click **Publish app** on the consent screen; an app that only you use doesn't need Google's review.
 
 ---
 

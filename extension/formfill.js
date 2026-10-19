@@ -5,7 +5,7 @@
 
   const COLORS = { profile: "#1f9d55", saved: "#1f9d55", ai: "#8b5cf6" };
   const TIPS = {
-    profile: "Filled from your Job Tracker profile",
+    profile: "Filled from your ApplyStack profile",
     saved: "Filled from an answer you saved",
     ai: "Written by AI from your profile. Check it before you submit",
   };

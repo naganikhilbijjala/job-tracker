@@ -17,7 +17,8 @@ from pathlib import Path
 CLIENT_FILE = Path(__file__).resolve().parent / "data" / "client_secret.json"
 SCOPE = "https://www.googleapis.com/auth/drive.file"
 LOGIN_SCOPE = "openid email profile"
-FOLDER_NAME = "Job Tracker Resumes"
+FOLDER_NAME = "ApplyStack Resumes"
+OLD_FOLDER_NAME = "Job Tracker Resumes"  # before the rename; still found, so reconnecting doesn't make a second folder
 
 AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -162,12 +163,12 @@ def cached_folder_link(db):
 
 
 def folder(db, refresh=False):
-    """Return (id, link) of the 'Job Tracker Resumes' folder, creating it if needed."""
+    """Return (id, link) of the resumes folder, creating it if needed."""
     raw = db.get_setting("google_folder")
     if raw and not refresh:
         f = json.loads(raw)
         return f["id"], f.get("link")
-    q = f"name = '{FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    q = f"(name = '{FOLDER_NAME}' or name = '{OLD_FOLDER_NAME}') and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     found = _api(db, "GET", API + "?" + urllib.parse.urlencode({"q": q, "fields": "files(id,webViewLink)"}))
     f = (found.get("files") or [None])[0] or _api(
         db, "POST", API + "?fields=id,webViewLink",

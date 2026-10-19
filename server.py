@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Job Tracker — a small, dependency-free job application tracker.
+"""ApplyStack — a small, dependency-free job application tracker.
 
 Locally:   python3 server.py        (then open http://127.0.0.1:8765)
 Vercel:    loads the WSGI `app` defined below.
@@ -1803,7 +1803,7 @@ def mcp_tools(db, origin):
     ]
 
 
-MCP_INSTRUCTIONS = ("Job Tracker holds the user's job applications, saved job descriptions, their master profile, "
+MCP_INSTRUCTIONS = ("ApplyStack holds the user's job applications, saved job descriptions, their master profile, "
                     "and tailored resumes. To update the profile from the user's notes: read get_profile, merge in "
                     "the facts from their notes, and save the whole thing with update_profile. To tailor a resume: call get_profile and get_job, write the resume "
                     "using only facts from the profile, then save it with save_tailored_resume. Its result includes "
@@ -1828,7 +1828,7 @@ def mcp_endpoint(req):
     except ValueError:
         return json_response({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
     tools = mcp_tools(db, req.origin)
-    info = {"name": "job-tracker", "version": "1.0.0"}
+    info = {"name": "applystack", "version": "1.0.0"}
     if isinstance(payload, list):
         replies = [r for r in (mcp.handle(m, tools, info, MCP_INSTRUCTIONS) for m in payload) if r]
     else:
@@ -1860,7 +1860,7 @@ def main():
     store()
     server = make_server(HOST, PORT, app, server_class=ThreadingWSGIServer, handler_class=QuietHandler)
     url = f"http://{HOST}:{PORT}"
-    print(f"Job Tracker running at {url}  (Ctrl+C to stop)")
+    print(f"ApplyStack running at {url}  (Ctrl+C to stop)")
     if "--open" in sys.argv:
         webbrowser.open(url)
     try:

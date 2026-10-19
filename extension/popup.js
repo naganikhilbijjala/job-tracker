@@ -6,6 +6,7 @@ const msg = document.getElementById("msg");
 const saveBtn = document.getElementById("save");
 let status = "applied";
 let config = { server: "", token: "" };
+const DEFAULT_SERVER = "https://www.applystack.app";
 
 function show(el, text, kind = "") {
   el.hidden = false;
@@ -33,7 +34,7 @@ async function api(path, opts = {}) {
 function showSetup(note = "", kind = "") {
   form.hidden = true;
   setup.hidden = false;
-  setup.server.value = config.server || "";
+  setup.server.value = config.server || DEFAULT_SERVER;
   const el = document.getElementById("setup-msg");
   if (note) show(el, note, kind); else el.hidden = true;
 }
@@ -49,9 +50,9 @@ setup.addEventListener("submit", async (e) => {
   }
   btn.disabled = true;
   try {
-    // Custom domains need permission; *.vercel.app and localhost are granted at install.
+    // Custom domains need permission; applystack.app, *.vercel.app and localhost are granted at install.
     // (The request must run before any other await, while the click still counts as a user gesture.)
-    const preGranted = /^https:\/\/[^/]+\.vercel\.app$|^http:\/\/(127\.0\.0\.1|localhost):8765$/.test(origin);
+    const preGranted = /^https:\/\/(www\.)?applystack\.app$|^https:\/\/[^/]+\.vercel\.app$|^http:\/\/(127\.0\.0\.1|localhost):8765$/.test(origin);
     const granted = preGranted || await chrome.permissions.request({ origins: [origin + "/*"] });
     if (!granted) throw new Error("The extension needs permission to talk to that address.");
     config = { server: origin, token: "" };
@@ -150,7 +151,7 @@ async function init() {
   } catch (err) {
     if (err instanceof AuthError) return showSetup("Your login expired — enter the password again.", "err");
     saveBtn.disabled = true;
-    return show(msg, `Can't reach the tracker at <b>${config.server}</b>. ` +
+    return show(msg, `Can't reach ApplyStack at <b>${config.server}</b>. ` +
       (config.server.includes("127.0.0.1") ? "Start it with <b>./run.sh</b>, then reopen this popup." : "Check your connection."), "err");
   }
   form.resume_id.innerHTML = `<option value="">— none —</option>` + resumes
@@ -195,7 +196,7 @@ form.addEventListener("submit", async (e) => {
       body: JSON.stringify(data),
     });
     await chrome.storage.local.set({ status, resume_id: data.resume_id });
-    show(msg, `${res.created ? "Saved" : "Updated"} ✓ — <a href="${config.server}/?job=${res.job.id}" target="_blank">open in tracker</a>`, "ok");
+    show(msg, `${res.created ? "Saved" : "Updated"} ✓ — <a href="${config.server}/?job=${res.job.id}" target="_blank">open in ApplyStack</a>`, "ok");
     saveBtn.textContent = "Saved";
     setTimeout(() => window.close(), 1500);
   } catch (err) {
