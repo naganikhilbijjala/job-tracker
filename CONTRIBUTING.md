@@ -35,6 +35,7 @@ Your local data goes in `data/`, which git ignores. To try the AI features, add 
 
 - **Python standard library only.** No `pip install`, no frameworks. This keeps setup to one command and lets anyone deploy for free. If a feature really needs a package, open an issue to discuss it first.
 - **No build step for the front end.** Plain JavaScript that runs as written.
+- **Bump the `?v=` number** on `/static/…` links in the HTML pages when you change a CSS or JS file, so phones that cached the old file pick up the new one.
 - **It has to work on a phone.** Check new screens at about 390px wide, and in dark mode.
 - **The AI must never invent facts.** Resumes and answers come only from the user's profile. Keep that rule in any prompt you change.
 - **Never commit personal data.** No real resumes, job data, API keys, tokens, or `.env` files. Use made-up examples in issues and pull requests too.
