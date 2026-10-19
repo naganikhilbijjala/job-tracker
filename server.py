@@ -1744,9 +1744,12 @@ def generated_page(req, gid):
 # ---------------------------------------------------------------- MCP (for Claude)
 
 def mcp_token(db, rotate=False):
+    """Your MCP token, for the Profile tab. Stored encrypted (so you can see it again), with a one-way
+    fingerprint that's what's checked when Claude connects."""
     token = None if rotate else db.get_setting("mcp_token")
     if not token:
         token = secrets.token_urlsafe(32)
+        db.set_setting("mcp_token_hash", database.token_fingerprint(token))
         db.set_setting("mcp_token", token)
     return token
 
@@ -1931,8 +1934,8 @@ MCP_INSTRUCTIONS = ("ApplyStack holds the user's job applications, saved job des
 def mcp_endpoint(req):
     auth = req.header("Authorization")
     token = auth[7:] if auth.startswith("Bearer ") else req.query.get("key", "")
-    rows = store()[0].query("SELECT user_id FROM user_settings WHERE key = 'mcp_token' AND value = ?",
-                            (token,)) if token else []
+    rows = store()[0].query("SELECT user_id FROM user_settings WHERE key = 'mcp_token_hash' AND value = ?",
+                            (database.token_fingerprint(token),)) if token else []
     if not rows or (MULTI_USER and not is_active(rows[0]["user_id"])):
         time.sleep(1)
         raise ApiError(401, "Invalid MCP token — copy it from the Profile tab")

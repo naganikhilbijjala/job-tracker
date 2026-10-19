@@ -5,6 +5,7 @@
   have no lasting disk, so resume files are stored in the database as well.
 """
 import base64
+import hashlib
 import http.client
 import json
 import os
@@ -155,7 +156,13 @@ class _Database:
 
 
 # Per-person settings that are secrets: stored encrypted (see secretbox.py), never as plain text.
-SECRET_SETTINGS = ("ai_config", "google_token")
+SECRET_SETTINGS = ("ai_config", "google_token", "mcp_token")
+
+
+def token_fingerprint(token):
+    """How an MCP token is looked up when Claude connects: a one-way hash, so the stored value can't be
+    used as a token. (Tokens are 256-bit random, so a plain SHA-256 can't be reversed by guessing.)"""
+    return hashlib.sha256(b"applystack-mcp-token:" + token.encode()).hexdigest()
 
 
 class UserDB:
@@ -209,6 +216,10 @@ def open_secret(keyring, value, context):
         return None
 
 
+def is_fingerprinted(db, uid):
+    return bool(db.query("SELECT 1 FROM user_settings WHERE user_id = ? AND key = 'mcp_token_hash'", (uid,)))
+
+
 def encrypt_secrets(db, keyring):
     """Encrypt secrets saved as plain text before encryption existed, and re-encrypt any made with
     an older key, so the database holds only ciphertext under the current key."""
@@ -217,6 +228,12 @@ def encrypt_secrets(db, keyring):
     updates = []
     for r in rows:
         context = secret_context(r["user_id"], r["key"])
+        if r["key"] == "mcp_token" and not is_fingerprinted(db, r["user_id"]):
+            plain = open_secret(keyring, r["value"], context)
+            if plain:  # tokens from before fingerprints: add one so Claude can still connect with it
+                updates.append(("INSERT INTO user_settings (user_id, key, value) VALUES (?, 'mcp_token_hash', ?) "
+                                "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value",
+                                (r["user_id"], token_fingerprint(plain))))
         if keyring.needs_reencrypting(r["value"], context):
             plain = open_secret(keyring, r["value"], context)
             updates.append(("UPDATE user_settings SET value = ? WHERE user_id = ? AND key = ?",

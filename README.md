@@ -152,7 +152,7 @@ One deployment and one database can serve you and anyone you share the link with
 Each person uses their own AI key (Profile tab) and their own Claude/MCP token. For the browser extension, they click **Get connection code** on the Resumes tab and paste it in place of a password.
 
 **Good to know:**
-- AI keys and Google Drive tokens are stored encrypted, so nobody browsing the database, you included, can read them. Jobs, resumes and profiles are stored as normal, so you can see those in Turso; tell your friends.
+- AI keys, Claude (MCP) connection tokens and Google Drive tokens are stored encrypted, so nobody browsing the database, you included, can read them. MCP tokens are checked by a one-way fingerprint, like GitHub tokens. Jobs, resumes and profiles are stored as normal, so you can see those in Turso; tell your friends.
 - Set `ENCRYPTION_KEY` (see the table in "Deploy on Vercel"). Without it, keys are encrypted with a key derived from `APP_PASSWORD` (or the Google client secret), and changing that would make saved keys unreadable. Adding `ENCRYPTION_KEY` later is fine: existing keys are re-encrypted with it on the next start.
 - If Google sign-in ever breaks, the admin password still works at `https://YOUR-APP.vercel.app/#admin`.
 - The **Users** tab shows how many jobs and how much resume storage each person uses. Turso's free plan includes 5 GB, which is far more than a group of friends needs.

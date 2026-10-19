@@ -436,6 +436,35 @@ class MultiUserTest(unittest.TestCase):
         self.assertNotIn("PLAINTEXT", json.dumps(db.query("SELECT * FROM user_settings")))
         self.assertIn("PLAINTEXT-refresh", user.get_setting("google_token"))
 
+    def test_mcp_tokens_are_not_stored_readably(self):
+        def tools_list(token):
+            return Client(bearer=token).call("POST", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["status"]
+        f = self.friend
+        token = f.call("GET", "/api/mcp")["json"]["token"]
+        self.assertEqual(f.call("GET", "/api/mcp")["json"]["token"], token)  # you can still see your own
+        db, _ = server.store()
+        rows = {r["key"]: r["value"] for r in
+                db.query("SELECT key, value FROM user_settings WHERE user_id = ?", (self.friend_id,))}
+        self.assertTrue(rows["mcp_token"].startswith("enc1:"))
+        self.assertNotIn(token, json.dumps(db.query("SELECT * FROM user_settings")))
+        self.assertEqual(rows["mcp_token_hash"], database.token_fingerprint(token))
+        self.assertEqual(tools_list(token), 200)
+        self.assertEqual(tools_list(rows["mcp_token_hash"]), 401)  # the stored fingerprint isn't a token
+        new = f.call("POST", "/api/mcp/rotate")["json"]["token"]
+        self.assertEqual((tools_list(token), tools_list(new)), (401, 200))
+
+    def test_plain_text_mcp_tokens_from_before_keep_working(self):
+        db, _ = server.store()
+        uid = self.user_id("friend@example.com")
+        db.run_many([("DELETE FROM user_settings WHERE user_id = ? AND key IN ('mcp_token', 'mcp_token_hash')", (uid,)),
+                     ("INSERT INTO user_settings (user_id, key, value) VALUES (?, 'mcp_token', 'old-plain-token-abc')",
+                      (uid,))])
+        database.encrypt_secrets(db, database.UserDB.keyring)
+        self.assertNotIn("old-plain-token-abc", json.dumps(db.query("SELECT * FROM user_settings")))
+        res = Client(bearer="old-plain-token-abc").call("POST", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        self.assertEqual(res["status"], 200)
+        self.assertEqual(self.friend.call("GET", "/api/mcp")["json"]["token"], "old-plain-token-abc")
+
     def test_plain_text_keys_from_before_get_encrypted(self):
         db, _ = server.store()
         db.execute("INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, 'ai_config', ?)",
