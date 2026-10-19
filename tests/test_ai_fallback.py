@@ -14,6 +14,7 @@ import ai  # noqa: E402
 # What each fake provider answers, in order: an HTTP status (200 means a normal reply). The last one repeats.
 SCRIPTS = {}
 CALLS = {}
+AGENTS = []
 
 
 class FakeProvider(BaseHTTPRequestHandler):
@@ -21,8 +22,17 @@ class FakeProvider(BaseHTTPRequestHandler):
         name = self.path.split("/")[1]
         self.rfile.read(int(self.headers["Content-Length"]))
         CALLS[name] = CALLS.get(name, 0) + 1
+        AGENTS.append(self.headers.get("User-Agent", ""))
         script = SCRIPTS[name]
         status = script[min(CALLS[name], len(script)) - 1]
+        if status == 1010:  # Cloudflare's "banned browser signature" page, as Groq sends it
+            out = b"error code: 1010"
+            self.send_response(403)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+            return
         body = ({"choices": [{"message": {"content": f"hello from {name}"}, "finish_reason": "stop"}]}
                 if status == 200 else {"error": {"message": f"{name} says {status}"}})
         out = json.dumps(body).encode()
@@ -99,6 +109,19 @@ class FallbackTest(unittest.TestCase):
         config = self.config("main", "backup")
         config["base_url"] = "http://127.0.0.1:9/nothing-here"
         self.assertEqual(self.ask(config), "hello from backup")
+
+    def test_requests_say_who_they_are(self):
+        SCRIPTS["main"] = [200]
+        AGENTS.clear()
+        self.ask(self.config("main"))
+        self.assertTrue(AGENTS and AGENTS[-1].startswith("ApplyStack/"))  # not Python-urllib, which Cloudflare blocks
+
+    def test_a_firewall_block_isnt_reported_as_a_bad_key(self):
+        SCRIPTS["main"] = [1010]
+        with self.assertRaises(ai.AIError) as e:
+            self.ask(self.config("main"))
+        self.assertIn("firewall", str(e.exception))
+        self.assertNotIn("rejected the API key", str(e.exception))
 
     def test_stops_retrying_after_the_retry_window(self):
         ai.RETRY_WINDOW = 0.005  # shorter than the first wait

@@ -28,6 +28,9 @@ PROVIDERS = {
 # Claude models that accept server-side fallback when their safety classifiers decline.
 CLAUDE_FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 TIMEOUT = 280  # Vercel stops a function at 300 s
+# Sent with every request. Some providers sit behind Cloudflare, which blocks Python's default
+# "Python-urllib" identifier with "error code: 1010" (Groq does).
+USER_AGENT = "ApplyStack/1.0 (+https://github.com/naganikhilbijjala/job-tracker)"
 # When a provider is overloaded: retry after these waits, but never keep at one provider for longer
 # than RETRY_WINDOW, and stop everything (backup included) within TOTAL_BUDGET.
 RETRY_WAITS = (3, 8)
@@ -68,13 +71,25 @@ def _error_message(raw):
     return str(data)[:400]
 
 
+def _blocked(code, detail):
+    """A firewall in front of the provider refused the request, before the key was even checked."""
+    return (code == 403 and "1010" in detail) or "cloudflare" in detail.lower()
+
+
+BLOCKED = ("The provider's firewall blocked the request ({detail}). This isn't your key; "
+           "try again later, and if it keeps happening, please report it on ApplyStack's GitHub.")
+
+
 def _post(url, headers, body, timeout=TIMEOUT):
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+    req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                 headers={"User-Agent": USER_AGENT, **headers}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:
             return json.load(res)
     except urllib.error.HTTPError as e:
         detail = _error_message(e.read().decode("utf-8", "replace"))
+        if _blocked(e.code, detail):
+            raise AIError(BLOCKED.format(detail=detail)) from None
         if e.code in (401, 403):
             raise AIError(f"The provider rejected the API key ({e.code}): {detail}") from None
         if e.code == 429:  # quota: retrying straight away won't help, but a backup provider can
@@ -146,10 +161,13 @@ def list_models(config):
         url = base + "/models"
         headers = {"Authorization": f"Bearer {config['api_key']}"}
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as res:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **headers})
+        with urllib.request.urlopen(req, timeout=30) as res:
             data = json.load(res)
     except urllib.error.HTTPError as e:
         detail = _error_message(e.read().decode("utf-8", "replace"))
+        if _blocked(e.code, detail):
+            raise AIError(BLOCKED.format(detail=detail)) from None
         if e.code in (401, 403):
             label = PROVIDERS.get(provider, {}).get("label", "The provider")
             raise AIError(f"{label} didn't accept this API key. Check it's a key for {label}. ({detail})") from None
