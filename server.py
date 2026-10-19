@@ -1599,7 +1599,7 @@ def chat_clear(req, job_id):
 
 def save_generated(db, job_id, content, title="", source="app"):
     job = find_job(db, job_id) if job_id else None
-    content = str(content).strip()
+    content = ai.clean_resume(content)  # only the resume: no notes from the AI about it
     if not content:
         raise ApiError(400, "The resume is empty")
     if not title:
@@ -1683,7 +1683,8 @@ def find_generated(db, gid):
     rows = db.query("SELECT * FROM generated_resumes WHERE id = ? AND user_id = ?", (gid, db.uid))
     if not rows:
         raise ApiError(404, "Resume not found")
-    return rows[0]
+    # Resumes saved before clean_resume existed may still hold the AI's notes; never show or print them.
+    return {**rows[0], "content": ai.clean_resume(rows[0]["content"])}
 
 
 def content_hash(content):
@@ -1808,7 +1809,7 @@ def mcp_tools(db, origin):
         rows = db.query("SELECT * FROM generated_resumes WHERE id = ? AND user_id = ?", (resume_id, db.uid))
         if not rows:
             raise mcp.ToolError(f"No tailored resume with id {resume_id}")
-        return rows[0]
+        return {**rows[0], "content": ai.clean_resume(rows[0]["content"])}
 
     def check_summary(gid):
         report = check_resume(db, find_generated(db, gid))
@@ -1839,10 +1840,11 @@ def mcp_tools(db, origin):
     def update_tailored_resume(resume_id, content):
         if not db.query("SELECT 1 FROM generated_resumes WHERE id = ? AND user_id = ?", (resume_id, db.uid)):
             raise mcp.ToolError(f"No tailored resume with id {resume_id}")
-        if not str(content).strip():
+        content = ai.clean_resume(content)
+        if not content:
             raise mcp.ToolError("content is empty")
         db.execute("UPDATE generated_resumes SET content = ? WHERE id = ? AND user_id = ?",
-                   (str(content).strip(), resume_id, db.uid))
+                   (content, resume_id, db.uid))
         return {"id": resume_id, "open_to_print_as_pdf": f"{origin}/resume/{resume_id}",
                 "check": check_summary(resume_id)}
 

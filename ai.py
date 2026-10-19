@@ -257,7 +257,48 @@ Two or three sentences aimed at this job.
 ### Project Name | Tech, Tech
 - What it does and the result
 
-Rules: use exactly these heading levels and the " | " separators; "Present" for current roles; most recent first; only include contact details and links that appear in the profile (write full URLs); skip sections the profile has nothing for; aim for one page, about 3–5 bullets for recent roles and fewer for older ones. The resume page scales the text (9–11 pt) and spacing to fill exactly one page, so when asked to make it fit, or told it is some number of lines over or under, change about that many lines and no more."""
+Rules: the resume is sent to employers exactly as written, so it holds only the resume itself: never notes, explanations, or a summary of what you changed or emphasized (put those outside, after it). Use exactly these heading levels and the " | " separators; "Present" for current roles; most recent first; only include contact details and links that appear in the profile (write full URLs); skip sections the profile has nothing for; aim for one page, about 3–5 bullets for recent roles and fewer for older ones. The resume page scales the text (9–11 pt) and spacing to fill exactly one page, so when asked to make it fit, or told it is some number of lines over or under, change about that many lines and no more."""
+
+
+# What a model sometimes writes into a resume about the resume: "Here's your tailored resume:",
+# "The resume emphasizes React… while preserving all original dates", "Note: …".
+_COMMENTARY = re.compile(
+    r"\b(?:the (?:above |updated |tailored |revised )?(?:resume|cv)|this (?:resume|cv|version|draft)|"
+    r"(?:resume|cv) (?:is|has been|was) (?:tailored|updated|revised)|tailored (?:resume|version|to (?:this|the) (?:job|role|position))|"
+    r"here(?:'s| is) (?:your|the|a)|i(?:'ve| have)? (?:kept|added|removed|made|focused|updated|adjusted|reordered|"
+    r"emphasi[sz]ed|highlighted|tailored|rewrote|reworded|included|preserved)|emphasi[sz](?:es|ed|ing) (?:your|the) |what i changed|"
+    r"while preserving|preserv(?:es|ed|ing) (?:all )?(?:the )?original|original (?:dates|titles|resume|wording)|"
+    r"changes (?:made|i made)|let me know|feel free|answer was cut off|keywords? from the (?:job|posting|description))\b",
+    re.I)
+# Lines that are part of the resume's structure: headings, bullets, "Title | Dates" rows.
+_STRUCTURE = re.compile(r"^\s*(?:#{1,3}\s|[-*•]\s|\*\*.+\*\*|.+\s\|\s.+)")
+
+
+def clean_resume(text):
+    """The resume alone: drops a model's commentary before the name heading or after the last section,
+    stray code fences, and note/quote lines. Lines that are part of the resume are never touched."""
+    lines = [l for l in str(text or "").replace("\r\n", "\n").split("\n")
+             if not re.match(r"^\s*```", l)                              # stray fences
+             and not re.match(r"^\s*>", l)                               # blockquotes (never in a resume)
+             and not re.match(r"^\s*[*_(]*\s*notes?\s*[:*]", l, re.I)]  # "Note: …", "**Note:** …"
+    first = next((i for i, l in enumerate(lines) if re.match(r"^#\s", l)), None)
+    if first:  # "Here's your tailored resume:" before the name
+        lines = lines[first:]
+    # A "## Notes" / "## Changes made" section at the end isn't part of the resume.
+    for i, l in enumerate(lines):
+        if re.match(r"^#{2,3}\s+(?:notes?|changes|what i changed|tailoring notes|summary of changes)\b", l, re.I):
+            lines = lines[:i]
+            break
+    # In the last section, a plain (non-bullet, non-heading) line that talks about the resume starts the
+    # commentary; it and everything after it go ("The resume emphasizes…", "Changes made:" + a list).
+    heading = max((i for i, l in enumerate(lines) if re.match(r"^#{1,3}\s", l)), default=0)
+    for i in range(heading + 1, len(lines)):
+        if lines[i].strip() and not _STRUCTURE.match(lines[i]) and _COMMENTARY.search(lines[i]):
+            lines = lines[:i]
+            break
+    while lines and re.fullmatch(r"\s*(?:-{3,}|\*{3,}|_{3,})?\s*", lines[-1]):  # trailing rules and blanks
+        lines.pop()
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 SYSTEM_PROMPT = """You are a job-application assistant working for one candidate. You help them \
@@ -271,7 +312,7 @@ something the profile doesn't show, say so plainly and suggest an honest way to 
 description's terminology where it truthfully applies.
 - Answers to application-form questions should be ready to paste: no preamble, no "Here is…".
 - Follow the candidate's own instructions below unless they conflict with honesty.
-- When asked for a full resume, put the complete resume inside one fenced block that opens with ```resume and closes with ```, in the resume format below. Put any notes for the candidate after the block, not inside it.
+- When asked for a full resume, put the complete resume inside one fenced block that opens with ```resume and closes with ```, in the resume format below. Always close the block. Put any notes for the candidate (what you changed, what you emphasized, gaps) after the closing ```, never inside the block: everything inside goes straight onto the PDF that employers see.
 
 {resume_format}
 

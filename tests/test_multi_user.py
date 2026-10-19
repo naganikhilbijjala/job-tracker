@@ -6,11 +6,13 @@ Google is faked; everything else (routes, database, sessions) is the real app.
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import unittest
 import urllib.parse
+import zlib
 from pathlib import Path
 
 ADMIN = "admin@example.com"
@@ -475,6 +477,24 @@ class MultiUserTest(unittest.TestCase):
         self.assertNotIn("OLD-PLAINTEXT", json.dumps(db.query("SELECT * FROM user_settings")))
         self.assertEqual(server.ai_config(database.UserDB(db, self.friend_id))["api_key"], "gsk_OLD-PLAINTEXT")
         self.assertEqual(database.encrypt_secrets(db, database.UserDB.keyring), 0)  # nothing left to do
+
+    def test_ai_notes_never_reach_the_resume_or_pdf(self):
+        f = Client()
+        f.sign_in("resume-notes@example.com")
+        job = f.call("POST", "/api/jobs", {"company": "NotesCo"})["json"]["id"]
+        note = "The resume emphasizes React while preserving all original dates and titles."
+        body = "# Sam Lee\nsam@example.com\n\n## Experience\n### Acme | NYC\n**Engineer** | 2020 – Present\n- Built it"
+        gid = f.call("POST", f"/api/jobs/{job}/generated", {"content": body + "\n\n" + note})["json"]["id"]
+        self.assertNotIn("emphasizes", f.call("GET", f"/api/generated/{gid}")["json"]["content"])
+        # One saved before the cleanup existed is cleaned when opened or downloaded, too.
+        db, _ = server.store()
+        db.execute("UPDATE generated_resumes SET content = ? WHERE id = ?", (body + "\n\n" + note, gid))
+        self.assertNotIn("emphasizes", f.call("GET", f"/api/generated/{gid}")["json"]["content"])
+        pdf = f.call("GET", f"/api/generated/{gid}/pdf")
+        self.assertEqual(pdf["status"], 200)
+        text = b"".join(zlib.decompress(m) for m in re.findall(rb"stream\n(.*?)\nendstream", pdf["body"], re.S))
+        self.assertIn(b"Built it", text)  # the page text really is in there…
+        self.assertNotIn(b"emphasizes", text)  # …and the note isn't
 
     def test_forged_or_anonymous_requests(self):
         self.assertEqual(Client().call("GET", "/api/jobs")["status"], 401)
