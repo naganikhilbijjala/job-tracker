@@ -131,7 +131,10 @@ a { color: var(--accent); }
   border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 5;
 }
-.brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 15px; letter-spacing: -0.01em;
+         color: var(--text); text-decoration: none; border-radius: 8px; }
+.brand:hover img { filter: brightness(1.08); }
+.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .brand img { border-radius: 7px; }
 .tabs { display: flex; gap: 2px; background: var(--surface-2); border-radius: 10px; padding: 3px; }
 .tabs button { border: none; background: none; padding: 5px 14px; border-radius: 7px; justify-content: center; color: var(--muted); }

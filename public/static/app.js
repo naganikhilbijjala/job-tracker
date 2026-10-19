@@ -663,6 +663,17 @@ $$(".tabs button").forEach((b) => b.addEventListener("click", () => {
 }));
 
 $("#search").addEventListener("input", (e) => { state.search = e.target.value.trim(); render(); });
+
+// The logo goes home: the board. Ctrl/⌘/middle-click still opens a new tab, like any link.
+$(".brand").addEventListener("click", (e) => {
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+  e.preventDefault();
+  closeDrawer();
+  state.view = "board";
+  history.replaceState(null, "", "#board");
+  render();
+  scrollTo({ top: 0, behavior: "smooth" });
+});
 $("#add-job").addEventListener("click", () => openDrawer());
 
 document.addEventListener("keydown", (e) => {
