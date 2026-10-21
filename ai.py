@@ -312,11 +312,18 @@ def _clean_summary(lines, company):
     return lines
 
 
+def _plain(text):
+    """Ordinary hyphens and spaces: some models write non-breaking hyphens, narrow no-break spaces and "25 %"."""
+    text = re.sub("[\u2010\u2011\u2012]", "-", str(text or ""))
+    text = re.sub("[\u00a0\u2009\u202f]", " ", text)
+    return re.sub(r"(?<=\d) +%", "%", text)
+
+
 def clean_resume(text, company=""):
     """The resume alone: drops a model's commentary before the name heading or after the last section,
     stray code fences and note/quote lines, summary sentences naming the target company or stating an
     objective, and unusual hyphen characters. Headings, bullets and "Title | Dates" rows are never removed."""
-    text = re.sub("[\u2010\u2011\u2012]", "-", str(text or "")).replace("\u00a0", " ")
+    text = _plain(text)
     lines = [l for l in text.replace("\r\n", "\n").split("\n")
              if not re.match(r"^\s*```", l)                              # stray fences
              and not re.match(r"^\s*>", l)                               # blockquotes (never in a resume)
@@ -370,7 +377,7 @@ def cover_letter(reply):
     m = _COVER_BLOCK.search(str(reply or ""))
     if not m:
         return ""
-    lines = [line for line in m.group(1).strip().split("\n")
+    lines = [line for line in _plain(m.group(1)).strip().split("\n")
              if not _PLACEHOLDER.match(line) and not _LETTER_NOTE.match(line)]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
@@ -387,7 +394,7 @@ def resume_problems(reply, company=""):
     body, closed = found.group(1), bool(found.group(2))
     problems = [] if closed else ["The ```resume block isn't closed. End it with ``` on its own line."]
     cleaned = clean_resume(body, company)
-    norm = lambda l: re.sub("[\u2010\u2011\u2012]", "-", l).replace("\u00a0", " ").strip()
+    norm = lambda l: _plain(l).strip()
     kept = {norm(l) for l in cleaned.split("\n")}
     for line in body.split("\n"):
         if norm(line) and norm(line) not in kept and not line.lstrip().startswith("```"):

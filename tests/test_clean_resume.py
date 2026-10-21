@@ -105,6 +105,10 @@ class SummaryTest(unittest.TestCase):
         summary = "Backend engineer who builds systems that scale to millions of users. Led a team of 5."
         self.assertIn(summary, clean_resume(self.resume(summary), "Scale"))
 
+    def test_plain_spaces_and_percentages(self):
+        out = clean_resume(self.resume("Engineer.").replace("Built the", "Cut load time by 25\u202f% and built the"))
+        self.assertIn("Cut load time by 25% and built the", out)
+
     def test_summary_is_never_emptied(self):
         only = "Seeking a backend role at Stripe."
         self.assertIn(only, clean_resume(self.resume(only), "Stripe"))

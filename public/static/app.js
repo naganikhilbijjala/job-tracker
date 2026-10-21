@@ -1241,8 +1241,24 @@ function messageHTML(m, i) {
       <button type="button" data-copy="${i}">Copy</button></div></div>`;
 }
 
+// Phones: keep the drawer inside the part of the screen the keyboard leaves visible. Chrome does this
+// itself with interactive-widget=resizes-content; Safari and older browsers need the visual viewport.
+if (window.visualViewport) {
+  const fitViewport = () => {
+    const v = window.visualViewport;
+    if (Math.abs(v.scale - 1) > 0.01) return;  // pinch-zoomed: leave the layout alone
+    document.documentElement.style.setProperty("--vv-height", `${v.height}px`);
+    document.documentElement.style.setProperty("--vv-top", `${v.offsetTop}px`);
+  };
+  visualViewport.addEventListener("resize", fitViewport);
+  visualViewport.addEventListener("scroll", fitViewport);
+  fitViewport();
+}
+
 let chat = [];
 let chatJobId = null;
+let loadSeq = 0;
+const inFlight = new Map();  // job id -> the question still being answered, so it survives switching jobs
 
 function renderChat() {
   $("#chat-log").innerHTML = chat.map(messageHTML).join("") ||
@@ -1255,9 +1271,19 @@ function renderChat() {
 async function loadAssistant() {
   const id = state.editingId;
   if (!id) return;
+  const seq = ++loadSeq;
+  if (chatJobId !== id) {  // another job's chat: clear it now, not when this one has loaded
+    chat = [];
+    chatJobId = id;
+    $("#chat-log").innerHTML = "";
+    $("#tailored-list").innerHTML = "";
+    $("#ai-note").textContent = "Loading…";
+    $("#chat-form").message.value = "";
+  }
   try {
     const [aiInfo, history, tailored] = await Promise.all([
       api("/api/ai"), api(`/api/jobs/${id}/chat`), api(`/api/generated?job_id=${id}`)]);
+    if (seq !== loadSeq || state.editingId !== id) return;  // you've moved on to another job meanwhile
     const c = aiInfo.config;
     $("#ai-note").innerHTML = c.has_key
       ? `Using ${esc(aiInfo.providers[c.provider]?.label || c.provider)} · ${esc(c.model)}${history.length ? ` · <a href="#" id="clear-chat">Clear chat</a>` : ""}`
@@ -1271,7 +1297,8 @@ async function loadAssistant() {
            <a class="small" href="/api/generated/${t.id}/pdf" title="Download as a one-page PDF">PDF ↓</a>
            <button type="button" class="icon small danger" data-delete-tailored="${t.id}" title="Delete">✕</button></div>`).join("")}</div>`
       : "";
-    if (chatJobId !== id || !chat.some((m) => m.pending)) { chat = history; chatJobId = id; }
+    chat = history;
+    if (inFlight.has(id)) chat.push({ role: "user", content: inFlight.get(id) }, { role: "assistant", pending: true });
     renderChat();
   } catch (e) {
     toast(e.message, true);
@@ -1280,18 +1307,22 @@ async function loadAssistant() {
 
 async function sendChat(text) {
   const id = state.editingId;
-  if (!id || !text.trim() || chat.some((m) => m.pending)) return;
+  if (!id || !text.trim() || inFlight.has(id)) return;
+  inFlight.set(id, text);
   chat.push({ role: "user", content: text }, { role: "assistant", pending: true });
   renderChat();
   const started = Date.now();
   const timer = setInterval(() => { const el = $("#elapsed"); if (el) el.textContent = `${Math.round((Date.now() - started) / 1000)}s`; }, 1000);
   try {
     const res = await api(`/api/jobs/${id}/chat`, { method: "POST", json: { message: text } });
-    if (chatJobId === id) chat.splice(-2, 2, res.user, res.assistant);
+    const k = chatJobId === id ? chat.findIndex((m) => m.pending) : -1;
+    if (k > 0) chat.splice(k - 1, 2, res.user, res.assistant);
     if (res.backup) toast(`Your main AI provider was busy, so ${res.backup} (backup) answered`);
   } catch (e) {
-    if (chatJobId === id) chat.splice(-1, 1, { role: "assistant", error: e.message });
+    const k = chatJobId === id ? chat.findIndex((m) => m.pending) : -1;
+    if (k > 0) chat.splice(k, 1, { role: "assistant", error: e.message });
   } finally {
+    inFlight.delete(id);
     clearInterval(timer);
     if (chatJobId === id && state.editingId === id) renderChat();
   }

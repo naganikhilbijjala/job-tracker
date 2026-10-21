@@ -426,6 +426,11 @@ button.icon.small { font-size: 12px; padding: 2px 6px; }
 .chips button { flex: none; font-size: 12px; padding: 5px 10px; border-radius: 999px; }
 .composer { display: flex; gap: 8px; align-items: flex-end; padding: 8px 20px 12px; }
 .composer textarea { resize: none; }
+/* While typing on a short screen (keyboard up), the quick actions make way for the message. */
+@media (pointer: coarse) and (max-height: 560px) {
+  .assistant:focus-within .chips { display: none; }
+  .assistant:focus-within .composer textarea { max-height: 30vh; }
+}
 .dots::before { content: "●"; animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 details { margin: 8px 0; }
@@ -499,7 +504,8 @@ code.copy.pre { white-space: pre; overflow-x: auto; word-break: normal; font-siz
   .resume { flex-wrap: wrap; }
   .resume .actions { width: 100%; justify-content: flex-end; }
 
-  #drawer { width: 100vw; border-left: none; }
+  /* Sized to the visible area, so the on-screen keyboard never covers the message box (--vv-* set in app.js). */
+  #drawer { width: 100vw; border-left: none; top: var(--vv-top, 0); bottom: auto; height: var(--vv-height, 100dvh); }
   .drawer-body { padding: 14px 16px; }
   .drawer-head, .drawer-foot { padding: 10px 16px; }
   .drawer-foot { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
