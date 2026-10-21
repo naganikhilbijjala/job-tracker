@@ -496,11 +496,12 @@ class MultiUserTest(unittest.TestCase):
         self.assertIn(b"Built it", text)  # the page text really is in there…
         self.assertNotIn(b"emphasizes", text)  # …and the note isn't
 
-    def test_resume_generation_checks_retries_and_records_the_model(self):
+    def fake_ai(self):
+        """A fake OpenAI-style provider: returns (base URL, replies, calls). replies maps a path to a list of
+        (status, text), the last one repeating; calls counts requests per path."""
         import threading
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-        replies = {}  # path -> list of (status, text); the last one repeats
-        calls = {}
+        replies, calls = {}, {}
 
         class FakeAI(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -523,11 +524,13 @@ class MultiUserTest(unittest.TestCase):
         threading.Thread(target=fake.serve_forever, daemon=True).start()
         self.addCleanup(fake.server_close)
         self.addCleanup(fake.shutdown)
-        base = f"http://127.0.0.1:{fake.server_port}"
         saved = server.ai.RETRY_WAITS
         server.ai.RETRY_WAITS = (0.01, 0.01)
         self.addCleanup(setattr, server.ai, "RETRY_WAITS", saved)
+        return f"http://127.0.0.1:{fake.server_port}", replies, calls
 
+    def test_resume_generation_checks_retries_and_records_the_model(self):
+        base, replies, calls = self.fake_ai()
         c = Client()
         c.sign_in("resume-model@example.com")
         c.call("PUT", "/api/ai", {"provider": "openai", "api_key": "sk-main-123456", "model": "main-model",
@@ -566,6 +569,36 @@ class MultiUserTest(unittest.TestCase):
         res = c.call("POST", f"/api/jobs/{job}/chat", {"message": "Why do I want to work here?"})["json"]
         self.assertEqual((res["assistant"]["content"], res["backup"]), ("Backup answer", "Groq"))
         self.assertEqual(res["assistant"]["model"], "Groq · backup-model")
+
+    def test_cover_letter_comes_as_a_pdf(self):
+        base, replies, calls = self.fake_ai()
+        c = Client()
+        c.sign_in("cover-letter@example.com")
+        c.call("PUT", "/api/ai", {"provider": "openai", "api_key": "sk-main-123456", "model": "m", "base_url": f"{base}/main"})
+        job = c.call("POST", "/api/jobs", {"company": "Haystack", "title": "Engineer"})["json"]["id"]
+        letter = ("# Sam Lee\nNYC | sam@example.com\n\n[Date]\n\nDear Hiring Manager,\n\nI built the search platform "
+                  "at Acme that serves two million queries a day.\n\nSincerely,\nSam Lee")
+        # A letter written without the block is asked for once more, so there's a PDF to offer.
+        replies.update(main=[(200, letter.replace("# ", "")), (200, f"Here it is:\n```cover\n{letter}\n```\nNote: short.")])
+        res = c.call("POST", f"/api/jobs/{job}/chat", {"message": "Write a cover letter for this job"})["json"]
+        self.assertEqual(calls["main"], 2)
+        url = f"/api/jobs/{job}/chat/{res['assistant']['id']}/cover.pdf?today=2026-10-21"
+        out = c.call("GET", url)
+        self.assertEqual(out["status"], 200)
+        self.assertTrue(out["body"].startswith(b"%PDF"))
+        self.assertIn("Sam%20Lee%20Cover%20Letter%20-%20Haystack.pdf", dict(out["headers"])["Content-Disposition"])
+        text = b"".join(zlib.decompress(m) for m in re.findall(rb"stream\n(.*?)\nendstream", out["body"], re.S))
+        for part in (b"Sam Lee", b"October 21, 2026", b"Dear Hiring Manager,", b"two million", b"Sincerely,"):
+            self.assertIn(part, text)
+        for part in (b"[Date]", b"Here it is", b"Note"):
+            self.assertNotIn(part, text)
+        # Someone else can't download it, and a reply without a letter has none.
+        other = Client()
+        other.sign_in("cover-letter-other@example.com")
+        self.assertEqual(other.call("GET", url)["status"], 404)
+        replies.update(main=[(200, "Sure.")])
+        plain = c.call("POST", f"/api/jobs/{job}/chat", {"message": "Hi"})["json"]["assistant"]["id"]
+        self.assertEqual(c.call("GET", f"/api/jobs/{job}/chat/{plain}/cover.pdf")["status"], 404)
 
     def test_forged_or_anonymous_requests(self):
         self.assertEqual(Client().call("GET", "/api/jobs")["status"], 401)

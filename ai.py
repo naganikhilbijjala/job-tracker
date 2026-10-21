@@ -342,6 +342,39 @@ def clean_resume(text, company=""):
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
+COVER_FORMAT = """Cover letter format (it becomes a PDF exactly as written):
+```cover
+# Full Name
+City, ST | phone | email | linkedin.com/in/handle
+
+Dear Hiring Manager,
+
+Two to four short paragraphs.
+
+Sincerely,
+Full Name
+```
+- Name and contact details come from the profile; leave out any the profile doesn't have. The app adds \
+the date, so don't write one.
+- No placeholders like [Company Address] or [Your Name], no company address block, no subject line.
+- Plain, specific writing grounded in the profile. No clichés ("I am excited to apply", "passionate", \
+"proven track record", "I believe I would be a great fit")."""
+
+_COVER_BLOCK = re.compile(r"```cover[^\n]*\n([\s\S]*?)(?:```|$)")
+_PLACEHOLDER = re.compile(r"^\s*\[[^\]]*\]\s*$|^\s*(?:date|\[date\])\s*:?\s*$", re.I)
+_LETTER_NOTE = re.compile(r"^\s*(?:>\s*)?(?:\*\*|_)?(?:note|notes|tip)s?\b\s*:", re.I)
+
+
+def cover_letter(reply):
+    """The letter inside a reply's ```cover block, without placeholder or note lines ("" when there's none)."""
+    m = _COVER_BLOCK.search(str(reply or ""))
+    if not m:
+        return ""
+    lines = [line for line in m.group(1).strip().split("\n")
+             if not _PLACEHOLDER.match(line) and not _LETTER_NOTE.match(line)]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
 _RESUME_BLOCK = re.compile(r"```resume[^\n]*\n([\s\S]*?)(```|$)")
 
 
@@ -378,8 +411,11 @@ description's terminology where it truthfully applies.
 - Answers to application-form questions should be ready to paste: no preamble, no "Here is…".
 - Follow the candidate's own instructions below unless they conflict with honesty.
 - When asked for a full resume, put the complete resume inside one fenced block that opens with ```resume and closes with ```, in the resume format below. Always close the block. Put any notes for the candidate (what you changed, what you emphasized, gaps) after the closing ```, never inside the block: everything inside goes straight onto the PDF that employers see.
+- When asked for a cover letter, put the complete letter inside one fenced block that opens with ```cover and closes with ```, in the cover letter format below, with any notes after the closing ```.
 
 {resume_format}
+
+{cover_format}
 
 <candidate_instructions>
 {instructions}
@@ -403,7 +439,7 @@ Resume they sent (if any): {resume}
 
 def system_prompt(profile, instructions, job, resume_label=""):
     return SYSTEM_PROMPT.format(
-        resume_format=RESUME_FORMAT,
+        resume_format=RESUME_FORMAT, cover_format=COVER_FORMAT,
         instructions=instructions.strip() or "(none)",
         profile=profile.strip() or "(The candidate hasn't filled in a profile yet. Tell them to add "
                                    "one on the Profile tab before you write a resume, and don't make one up.)",

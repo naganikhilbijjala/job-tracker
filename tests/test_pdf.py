@@ -73,5 +73,28 @@ class PdfTest(unittest.TestCase):
         self.assertEqual(pdf.file_name("no heading", 'A/B: "C"'), "Resume - A B C.pdf")
 
 
+
+class LetterTest(unittest.TestCase):
+    LETTER = ("# Alex Example\nAustin, TX | alex@example.com\n\nDear Hiring Manager,\n\n{body}\n\n"
+              "Sincerely,\nAlex Example")
+
+    def test_parts(self):
+        name, contact, paras = pdf.parse_letter(self.LETTER.format(body="I build reliable backend systems for payments teams at two fintech companies,\n" * 4))
+        self.assertEqual((name, contact), ("Alex Example", ["Austin, TX", "alex@example.com"]))
+        self.assertEqual(paras[0], ["Dear Hiring Manager,"])
+        self.assertEqual(len(paras[1]), 1)  # a hard-wrapped paragraph flows as one
+        self.assertEqual(paras[-1], ["Sincerely,", "Alex Example"])  # the sign-off keeps its line break
+
+    def test_long_letter_still_fits_one_page(self):
+        data, info = pdf.render_letter(self.LETTER.format(body="\n\n".join(["word " * 110] * 6)), "October 21, 2026")
+        self.assertTrue(data.startswith(b"%PDF-1.4"))
+        self.assertEqual(info["pages"], 1)
+        self.assertLess(info["font_size"], 11)
+        self.assertEqual(pdf.render_letter(self.LETTER.format(body="Short."))[1]["font_size"], 11)
+
+    def test_file_name(self):
+        self.assertEqual(pdf.file_name(self.LETTER, "Acme", kind="Cover Letter"), "Alex Example Cover Letter - Acme.pdf")
+
+
 if __name__ == "__main__":
     unittest.main()

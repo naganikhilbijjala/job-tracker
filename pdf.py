@@ -371,7 +371,11 @@ def render(markdown, size="auto", title="Resume", author=""):
     blocks = parse(markdown)
     t, extra = fit(blocks, size)
     pages, _ = layout(blocks, t, extra)
+    return _write(pages, title, author), {"pages": len(pages), "font_size": round(fit_style(t)["fs"], 1)}
 
+
+def _write(pages, title, author):
+    """Draw ops (in points from the top-left of the margins) as PDF file bytes."""
     objects = []  # bodies; object n is objects[n - 1]
 
     def add(body):
@@ -386,10 +390,11 @@ def render(markdown, size="auto", title="Resume", author=""):
         stream, annots = [], []
         for op in ops:
             if op[0] == "rule":
-                _, y, thick, color = op
+                _, y, thick, color, *span = op
+                x0, w = span or (0, CONTENT_W)
                 py = PAGE_H - MARGIN_Y - y
                 stream.append(f"{color[0]:.3f} {color[1]:.3f} {color[2]:.3f} RG {thick:.2f} w "
-                              f"{MARGIN_X:.2f} {py:.2f} m {MARGIN_X + CONTENT_W:.2f} {py:.2f} l S".encode())
+                              f"{MARGIN_X + x0:.2f} {py:.2f} m {MARGIN_X + x0 + w:.2f} {py:.2f} l S".encode())
                 continue
             _, x, base, data, style, fsize, color, spacing, link = op
             px, py = MARGIN_X + x, PAGE_H - MARGIN_Y - base
@@ -423,14 +428,88 @@ def render(markdown, size="auto", title="Resume", author=""):
     out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
     out += b"trailer\n<< /Size %d /Root %d 0 R /Info %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
         len(objects) + 1, catalog, info, xref)
-    return bytes(out), {"pages": len(page_ids), "font_size": round(fit_style(t)["fs"], 1)}
+    return bytes(out)
 
 
-def file_name(markdown, company=""):
+# ---------------------------------------------------------------- cover letters
+
+LETTER_INSET_X, LETTER_INSET_Y = 36, 25.2  # on top of the resume margins: 1in sides, 0.75in top and bottom
+LETTER_W, LETTER_LIMIT = CONTENT_W - 2 * LETTER_INSET_X, LIMIT - 2 * LETTER_INSET_Y
+
+
+def parse_letter(src):
+    """(name, contact items, paragraphs) from ai.COVER_FORMAT: '# Name', a contact line, then the letter.
+    Each paragraph is a list of lines: short lines (the greeting, the sign-off) keep their breaks."""
+    lines = str(src or "").replace("\r\n", "\n").strip().split("\n")
+    name, contact = "", []
+    if lines and (m := re.match(r"#\s+(.*)", lines[0].strip())):
+        name, lines = m.group(1).strip(), lines[1:]
+        while lines and lines[0].strip():
+            contact += [c.strip() for c in re.split(r"\s+[|·•]\s+", lines.pop(0)) if c.strip()]
+    paras, para = [], []
+    for line in lines + [""]:
+        line = re.sub(r"^#+\s*", "", line.strip())
+        if line:
+            para.append(line)
+        elif para:
+            paras.append(para if all(len(l) < 60 for l in para) else [" ".join(para)])
+            para = []
+    return name, contact, paras
+
+
+def render_letter(markdown, date="", title="Cover Letter", author=""):
+    """A cover letter as one-page PDF bytes: the candidate's name and contact line (styled like their resume),
+    the date, then the letter. The font shrinks a little when a long letter wouldn't fit one page."""
+    name, contact, paras = parse_letter(markdown)
+    for fs in (11, 10.5, 10, 9.5, 9):
+        pages, y = [[]], 0.0
+        lh = fs * 1.42
+
+        def put(lines, size, line_h, align="left"):
+            nonlocal y
+            for w, segs in lines:
+                if y + line_h > LETTER_LIMIT and y > 0:
+                    pages.append([])
+                    y = 0.0
+                base = LETTER_INSET_Y + y + (line_h - CONTENT * size) / 2 + ASCENT * size
+                dx = LETTER_INSET_X + ((LETTER_W - w) / 2 if align == "center" else 0)
+                for x, data, style, color, link in segs:
+                    pages[-1].append(("text", dx + x, base, data, style, size, color, 0, link))
+                y += line_h
+
+        if name:
+            size = fs * 1.9
+            put(wrap(runs(name, "bold"), size, LETTER_W), size, size * 1.1, align="center")
+            y += 3
+        if contact:
+            csize = fs * 0.9
+            parts = []
+            for k, item in enumerate(contact):
+                if k:
+                    parts.append((" | ", "regular", RULE, None))
+                parts += [(txt, st, MUTED, link) for txt, st, _, link in runs(item, "regular", MUTED)]
+            put(wrap(parts, csize, LETTER_W), csize, csize * 1.35, align="center")
+        if name or contact:
+            y += 6
+            pages[-1].append(("rule", LETTER_INSET_Y + y, 0.75, RULE, LETTER_INSET_X, LETTER_W))
+            y += 18
+        if date:
+            put(wrap(runs(date), fs, LETTER_W), fs, lh)
+            y += fs * 0.9
+        for para in paras:
+            for line in para:
+                put(wrap(runs(line), fs, LETTER_W), fs, lh)
+            y += fs * 0.9
+        if len(pages) == 1:
+            break
+    return _write(pages, title, author), {"pages": len(pages), "font_size": fs}
+
+
+def file_name(markdown, company="", kind="Resume"):
     """'Full Name Resume - Company.pdf': clean for a recruiter, and different per company so downloads don't clash."""
     name = re.search(r"^#\s+(.+)$", str(markdown or ""), re.M)
     name = re.sub(r"[*_`\[\]]", "", name.group(1)).strip() if name else ""
-    base = f"{name} Resume" if name else "Resume"
+    base = f"{name} {kind}" if name else kind
     if company.strip():
         base += f" - {company.strip()}"
     return re.sub(r"\s+", " ", re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", base)).strip()[:120] + ".pdf"

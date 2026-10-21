@@ -401,10 +401,11 @@ code.copy { display: block; padding: 8px 10px; user-select: all; word-break: bre
 .msg pre { background: var(--surface); padding: 8px; border-radius: 6px; overflow-x: auto; }
 .msg-actions { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
 .msg-actions .muted { margin-right: auto; }
-.msg-actions button, .resume-card .row button { padding: 3px 9px; font-size: 12px; }
+.msg-actions button, .resume-card .row button, .resume-card .row .btn { padding: 3px 9px; font-size: 12px; }
 .resume-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin: 6px 0; }
 .resume-preview { max-height: 260px; overflow-y: auto; font-size: 12px; margin-bottom: 8px; }
 .resume-preview h1 { font-size: 16px; text-align: center; margin: 0; }
+.letter-preview p { margin: 0 0 8px; }
 .resume-preview .contact { text-align: center; color: var(--muted); margin: 0 0 6px; }
 .resume-preview h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); margin: 10px 0 4px; }
 .resume-preview .entry-head, .resume-preview .entry-sub { display: flex; justify-content: space-between; gap: 8px; }

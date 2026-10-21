@@ -1204,7 +1204,7 @@ const QUICK_PROMPTS = {
   tailor: "Write my resume tailored to this job, following my instructions. Put the complete resume in the ```resume block.",
   skills: "List 10 skills I can add to this application's skills field. Base them on the job description, but only include skills my profile actually supports. Most relevant first, one per line, nothing else.",
   why: "Draft a 3–4 sentence answer to “Why do you want to work here?” for this job, grounded in my real experience. Ready to paste.",
-  cover: "Write a short cover letter (under 250 words) for this job, based only on my real experience.",
+  cover: "Write a short cover letter (under 250 words) for this job, based only on my real experience. Put the complete letter in the ```cover block.",
   match: "How well do I match this job? Give the top strengths and the real gaps, briefly, and how to address each gap honestly.",
 };
 
@@ -1220,17 +1220,22 @@ $("#drawer-tabs").addEventListener("click", (e) => {
   if (b && !b.disabled) showPane(b.dataset.pane);
 });
 
+const BLOCKS = /```(resume|cover)[^\n]*\n([\s\S]*?)(?:```|$)/;
+
 function messageHTML(m, i) {
   if (m.role === "user") return `<div class="msg user">${esc(m.content)}</div>`;
   if (m.pending) return `<div class="msg assistant pending"><span class="dots"></span> Thinking… <span id="elapsed"></span></div>`;
   if (m.error) return `<div class="msg assistant error">${esc(m.error)}</div>`;
-  // A ```resume block becomes a preview card with a "print to PDF" action.
-  const parts = m.content.split(/```resume[^\n]*\n([\s\S]*?)(?:```|$)/);
-  const html = parts.map((part, j) => j % 2
-    ? `<div class="resume-card"><div class="resume-preview">${renderResume(part)}</div>
+  // A ```resume block becomes a preview card with a "print to PDF" action; a ```cover block, a letter with a PDF download.
+  const parts = m.content.split(BLOCKS);
+  const html = parts.map((part, j) => j % 3 === 0 ? renderMarkdown(part) : j % 3 === 1 ? ""
+    : parts[j - 1] === "resume"
+      ? `<div class="resume-card"><div class="resume-preview">${renderResume(part)}</div>
          <div class="row"><button type="button" class="primary" data-save-resume="${i}" data-part="${j}">Open &amp; save as PDF</button>
          <button type="button" data-copy="${i}" data-part="${j}">Copy</button></div></div>`
-    : renderMarkdown(part)).join("");
+      : `<div class="resume-card"><div class="resume-preview letter-preview">${renderMarkdown(part)}</div>
+         <div class="row">${m.id ? `<a class="btn primary" href="/api/jobs/${chatJobId}/chat/${m.id}/cover.pdf?today=${todayISO()}">Download PDF</a>` : ""}
+         <button type="button" data-copy="${i}" data-part="${j}">Copy</button></div></div>`).join("");
   return `<div class="msg assistant">${html}
     <div class="msg-actions">${m.model ? `<span class="muted small" title="The AI that wrote this">${esc(m.model)}</span>` : ""}
       <button type="button" data-copy="${i}">Copy</button></div></div>`;
@@ -1293,7 +1298,7 @@ async function sendChat(text) {
 }
 
 function resumePart(i, j) {
-  const parts = chat[i].content.split(/```resume[^\n]*\n([\s\S]*?)(?:```|$)/);
+  const parts = chat[i].content.split(BLOCKS);
   return j === undefined ? chat[i].content : parts[j];
 }
 

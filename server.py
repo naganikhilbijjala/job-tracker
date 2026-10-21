@@ -1576,7 +1576,8 @@ def chat_send(req, job_id):
     while history and history[0]["role"] != "user":  # conversations must open with the user
         history.pop(0)
     reply, model = ask_assistant(db, job, [*history, {"role": "user", "content": text}],
-                                 about_resume=bool(RESUME_REQUEST.search(text)))
+                                 about_resume=bool(RESUME_REQUEST.search(text)) and not COVER_REQUEST.search(text),
+                                 about_cover=bool(COVER_REQUEST.search(text)))
     at = now()
     _, (_, reply_id) = db.run_many([
         ("INSERT INTO chat_messages (job_id, role, content, created_at) VALUES (?, 'user', ?, ?)", (job_id, text, at)),
@@ -1590,10 +1591,11 @@ def chat_send(req, job_id):
 
 
 RESUME_REQUEST = re.compile(r"\b(?:resume|résumé|cv)\b", re.I)
+COVER_REQUEST = re.compile(r"\bcover\s+letter\b", re.I)
 RESUME_RETRY_MIN_TIME = 90  # seconds that must be left (of Vercel's 300) to ask for a corrected resume
 
 
-def ask_assistant(db, job, messages, about_resume):
+def ask_assistant(db, job, messages, about_resume, about_cover=False):
     """The assistant's reply and which model wrote it. For resumes: only the main provider writes them
     (so they come out consistent), and a resume that fails the checks is sent back once to be fixed."""
     started = time.monotonic()
@@ -1619,7 +1621,41 @@ def ask_assistant(db, job, messages, about_resume):
             fixed = ""  # keep the first answer; the resume is still cleaned when it's saved
         if "```resume" in fixed and len(ai.resume_problems(fixed, job["company"])) < len(problems):
             reply, model = fixed, ai.answered_with()
+    left = 280 - (time.monotonic() - started)
+    if about_cover and not ai.cover_letter(reply) and left > RESUME_RETRY_MIN_TIME:
+        # Without the block there's no PDF to offer, so ask once more (some models skip the format).
+        fix = ("Put the complete cover letter in one ```cover block, closed with ```, in the cover letter format, "
+               "holding nothing but the letter. Put any notes after the block.")
+        try:
+            fixed = ai.complete(config, system, [*messages, {"role": "assistant", "content": reply},
+                                                 {"role": "user", "content": fix}], budget=left - 30)
+        except ai.AIError:
+            fixed = ""
+        if ai.cover_letter(fixed):
+            reply, model = fixed, ai.answered_with()
     return reply, model
+
+
+@route("GET", r"/api/jobs/(\d+)/chat/(\d+)/cover\.pdf")
+def cover_letter_pdf(req, job_id, message_id):
+    """The cover letter from an assistant reply, as a one-page PDF."""
+    db, _ = backend()
+    job = find_job(db, job_id)
+    rows = db.query("SELECT content FROM chat_messages WHERE id = ? AND job_id = ? AND role = 'assistant'",
+                    (message_id, job_id))
+    letter = ai.cover_letter(rows[0]["content"]) if rows else ""
+    if not letter:
+        raise ApiError(404, "No cover letter in that message")
+    name = pdf.file_name(letter, job["company"], kind="Cover Letter")
+    author = re.search(r"^#\s+(.+)$", letter, re.M)
+    # The user's date, not the server's (a download link can't send the X-Today header, so it's in the URL).
+    try:
+        day = date.fromisoformat(req.query.get("today", ""))
+    except ValueError:
+        day = date.fromisoformat(today())
+    data, _ = pdf.render_letter(letter, f"{day:%B} {day.day}, {day.year}", title=name.removesuffix(".pdf"),
+                                author=author.group(1).strip() if author else "")
+    return file_response(data, name, "inline" if req.query.get("view") else "attachment")
 
 
 @route("DELETE", r"/api/jobs/(\d+)/chat")
