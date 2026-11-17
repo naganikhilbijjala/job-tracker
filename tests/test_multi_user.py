@@ -289,6 +289,70 @@ class MultiUserTest(unittest.TestCase):
         self.assertNotIn(b"New role", self.admin.call("GET", "/api/profile")["body"])
         self.assert_admin_data_intact()
 
+    def test_mcp_client_goes_from_job_description_to_pdf(self):
+        """add_job → save_tailored_resume → check → get_tailored_resume_pdf, with only an MCP token."""
+        import base64
+        token = self.friend.call("GET", "/api/mcp")["json"]["token"]
+
+        def tool(name, args, tok=token):
+            result = Client(bearer=tok).call("POST", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                              "params": {"name": name, "arguments": args}})["json"]["result"]
+            return result, (None if result.get("isError") else json.loads(result["content"][0]["text"]))
+
+        names = [t["name"] for t in Client(bearer=token).call("POST", "/mcp", {"jsonrpc": "2.0", "id": 1,
+                 "method": "tools/list"})["json"]["result"]["tools"]]
+        for name in ("add_job", "get_tailored_resume_pdf", "get_resume_file"):
+            self.assertIn(name, names)
+
+        job = {"title": "Data Engineer", "company": "IndeedCo", "location": "Remote",
+               "url": "https://www.indeed.com/viewjob?jk=abc123", "description": "We need Python and Airflow."}
+        _, added = tool("add_job", job)
+        self.assertTrue(added["created"])
+        self.assertEqual((added["job"]["company"], added["job"]["status"], added["job"]["source"]),
+                         ("IndeedCo", "saved", "indeed.com"))
+        # The same URL again gives back the same job, not a duplicate, and doesn't change it.
+        _, again = tool("add_job", {**job, "title": "Changed"})
+        self.assertEqual((again["job_id"], again["created"], again["job"]["title"]),
+                         (added["job_id"], False, "Data Engineer"))
+        self.assertEqual(sum(j["company"] == "IndeedCo" for j in self.friend.call("GET", "/api/jobs")["json"]), 1)
+        self.assertTrue(tool("add_job", {"title": " ", "company": "X"})[0]["isError"])
+        self.assertTrue(tool("add_job", {"title": "T", "company": "X", "status": "bogus"})[0]["isError"])
+
+        _, saved = tool("save_tailored_resume", {"job_id": added["job_id"],
+                        "content": "# Friend Example\nfriend@example.com\n\n## Experience\n- Python and Airflow\n"})
+        self.assertEqual((saved["pages"], saved["file_name"]), (1, "Friend Example Resume - IndeedCo.pdf"))
+        self.assertFalse(tool("check_tailored_resume", {"resume_id": saved["id"]})[0].get("isError"))
+
+        _, got = tool("get_tailored_resume_pdf", {"resume_id": saved["id"]})
+        data = base64.b64decode(got["pdf_base64"])
+        self.assertEqual((got["pages"], got["file_name"]), (1, saved["file_name"]))
+        self.assertEqual(data, self.friend.call("GET", f"/api/generated/{saved['id']}/pdf")["body"])
+
+        _, updated = tool("update_tailored_resume", {"resume_id": saved["id"],
+                          "content": "# Friend Example\nfriend@example.com\n\n## Skills\n- Python\n"})
+        self.assertEqual(updated["pages"], 1)
+
+        # Someone else's resume (or job) is "not found", the same as for the existing tools.
+        self.assertTrue(tool("get_tailored_resume_pdf", {"resume_id": self.a_gen})[0]["isError"])
+        self.assertTrue(tool("get_tailored_resume_pdf", {"resume_id": saved["id"]}, self.a_mcp)[0]["isError"])
+        self.assertTrue(tool("save_tailored_resume", {"job_id": self.a_job, "content": "# X\n"})[0]["isError"])
+        self.assert_admin_data_intact()
+
+    def test_mcp_client_can_fetch_uploaded_resume_files(self):
+        import base64
+        def tool(token, name, args):
+            result = Client(bearer=token).call("POST", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                                "params": {"name": name, "arguments": args}})["json"]["result"]
+            return result, (None if result.get("isError") else json.loads(result["content"][0]["text"]))
+
+        _, got = tool(self.a_mcp, "get_resume_file", {"resume_file_id": self.a_resume})
+        self.assertEqual((got["file_name"], got["content_type"]), ("admin.pdf", "application/pdf"))
+        self.assertEqual(base64.b64decode(got["content_base64"]), b"%PDF admin secret resume")
+        friend_token = self.friend.call("GET", "/api/mcp")["json"]["token"]
+        res, _ = tool(friend_token, "get_resume_file", {"resume_file_id": self.a_resume})
+        self.assertTrue(res["isError"])
+        self.assertNotIn("secret", res["content"][0]["text"])
+
     def test_tailored_resume_downloads_as_a_named_pdf(self):
         res = self.admin.call("GET", f"/api/generated/{self.a_gen}/pdf")
         self.assertEqual(res["status"], 200)

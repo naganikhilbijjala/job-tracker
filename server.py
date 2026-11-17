@@ -4,6 +4,7 @@
 Locally:   python3 server.py        (then open http://127.0.0.1:8765)
 Vercel:    loads the WSGI `app` defined below.
 """
+import base64
 import csv
 import hashlib
 import hmac
@@ -1721,15 +1722,20 @@ def generated_get(req, gid):
     return json_response({**g, "file_name": generated_file_name(db, g)})
 
 
+def generated_pdf_file(db, g, size="auto"):
+    """Render a tailored resume to PDF: (bytes, info, file name). The app's download and MCP both use this."""
+    name = generated_file_name(db, g)
+    author = re.search(r"^#\s+(.+)$", g["content"], re.M)
+    data, info = pdf.render(g["content"], size, title=name.removesuffix(".pdf"),
+                            author=author.group(1).strip() if author else "")
+    return data, info, name
+
+
 @route("GET", r"/api/generated/(\d+)/pdf")
 def generated_pdf(req, gid):
     """The tailored resume as a one-page PDF, ready to upload to an application."""
     db, _ = backend()
-    g = find_generated(db, gid)
-    name = generated_file_name(db, g)
-    author = re.search(r"^#\s+(.+)$", g["content"], re.M)
-    data, info = pdf.render(g["content"], req.query.get("size", "auto"), title=name.removesuffix(".pdf"),
-                            author=author.group(1).strip() if author else "")
+    data, info, name = generated_pdf_file(db, find_generated(db, gid), req.query.get("size", "auto"))
     status, headers, body = file_response(data, name, "inline" if req.query.get("view") else "attachment")
     return status, [*headers, ("X-Resume-Pages", str(info["pages"]))], body
 
@@ -1875,9 +1881,37 @@ def mcp_tools(db, origin):
         job["history"] = db.query("SELECT at, kind, detail FROM events WHERE job_id = ? ORDER BY id", (job_id,))
         return job
 
+    def add_job(title, company, location="", url="", description="", status="saved", source=""):
+        try:
+            fields = clean_job({"title": title, "company": company, "location": location, "url": url,
+                                "description": description, "status": status, "source": source})
+            if not fields["title"] or not fields["company"]:
+                raise mcp.ToolError("title and company are required")
+            rows = db.query("SELECT id FROM jobs WHERE user_id = ? AND url = ? AND url != ''",
+                            (db.uid, fields["url"])) if fields["url"] else []
+            if rows:  # same URL as a job they already track: reuse it, change nothing
+                return {"job_id": rows[0]["id"], "created": False,
+                        "note": "A job with this URL is already tracked; returning it unchanged.",
+                        "job": job_summary(db, rows[0]["id"])}
+            job_id = insert_job(db, {k: v for k, v in fields.items() if v != ""})
+        except ApiError as e:
+            raise mcp.ToolError(e.message) from None
+        return {"job_id": job_id, "created": True, "job": job_summary(db, job_id)}
+
     def list_resume_files():
         return [{k: r[k] for k in ("id", "label", "filename", "uploaded_at", "job_count")}
                 for r in list_resumes(*backend())]
+
+    def get_resume_file(resume_file_id):
+        rows = db.query("SELECT * FROM resumes WHERE id = ? AND user_id = ?", (resume_file_id, db.uid))
+        if not rows:
+            raise mcp.ToolError(f"No resume file with id {resume_file_id}")
+        content = backend()[1].read(rows[0]["id"], rows[0]["filename"])
+        if content is None:
+            raise mcp.ToolError(f"The file for resume {resume_file_id} is missing; ask the user to upload it again")
+        return {"id": rows[0]["id"], "label": rows[0]["label"], "file_name": rows[0]["filename"],
+                "content_type": mimetypes.guess_type(rows[0]["filename"])[0] or "application/octet-stream",
+                "size": len(content), "content_base64": base64.b64encode(content).decode()}
 
     def list_tailored_resumes(job_id=None):
         sql = "SELECT id, job_id, title, source, created_at FROM generated_resumes WHERE user_id = ?"
@@ -1889,6 +1923,17 @@ def mcp_tools(db, origin):
         if not rows:
             raise mcp.ToolError(f"No tailored resume with id {resume_id}")
         return {**rows[0], "content": ai.clean_resume(rows[0]["content"], job_company(db, rows[0]["job_id"]))}
+
+    def pdf_summary(gid):
+        data, info, name = generated_pdf_file(db, find_generated(db, gid))
+        return data, {"file_name": name, "pages": info["pages"]}
+
+    def get_tailored_resume_pdf(resume_id):
+        rows = db.query("SELECT 1 FROM generated_resumes WHERE id = ? AND user_id = ?", (resume_id, db.uid))
+        if not rows:
+            raise mcp.ToolError(f"No tailored resume with id {resume_id}")
+        data, summary = pdf_summary(resume_id)
+        return {**summary, "pdf_base64": base64.b64encode(data).decode()}
 
     def check_summary(gid):
         report = check_resume(db, find_generated(db, gid))
@@ -1908,7 +1953,8 @@ def mcp_tools(db, origin):
             gid = save_generated(db, int(job_id), content, title, source="claude", model="Claude (over MCP)")
         except ApiError as e:
             raise mcp.ToolError(e.message) from None
-        return {"id": gid, "open_to_print_as_pdf": f"{origin}/resume/{gid}", "check": check_summary(gid)}
+        return {"id": gid, "open_to_print_as_pdf": f"{origin}/resume/{gid}", **pdf_summary(gid)[1],
+                "check": check_summary(gid)}
 
     def check_tailored_resume(resume_id):
         try:
@@ -1925,7 +1971,7 @@ def mcp_tools(db, origin):
             raise mcp.ToolError("content is empty")
         db.execute("UPDATE generated_resumes SET content = ? WHERE id = ? AND user_id = ?",
                    (content, resume_id, db.uid))
-        return {"id": resume_id, "open_to_print_as_pdf": f"{origin}/resume/{resume_id}",
+        return {"id": resume_id, "open_to_print_as_pdf": f"{origin}/resume/{resume_id}", **pdf_summary(resume_id)[1],
                 "check": check_summary(resume_id)}
 
     def change_job(job_id, status=None, note=None):
@@ -1980,6 +2026,10 @@ def mcp_tools(db, origin):
                  "status history, and tailored resumes already made for it.", {"job_id": int_id}, ["job_id"], get_job),
         mcp.Tool("list_resume_files", "Resume files the candidate has uploaded (names only; they are PDFs).",
                  {}, [], list_resume_files),
+        mcp.Tool("get_resume_file", "Download one uploaded resume file (id from list_resume_files) as base64, "
+                 "e.g. to attach it to an application. Returns JSON: file_name, content_type, size, content_base64.",
+                 {"resume_file_id": {"type": "integer", "description": "Resume file id from list_resume_files"}},
+                 ["resume_file_id"], get_resume_file),
         mcp.Tool("list_tailored_resumes", "Tailored resumes saved in the tracker (Markdown), optionally for one job.",
                  {"job_id": int_id}, [], list_tailored_resumes),
         mcp.Tool("get_tailored_resume", "Read a saved tailored resume's full Markdown.",
@@ -1997,6 +2047,19 @@ def mcp_tools(db, origin):
                  "save_tailored_resume), e.g. after acting on check_tailored_resume. Returns the new check.",
                  {"resume_id": {"type": "integer"}, "content": {"type": "string"}},
                  ["resume_id", "content"], update_tailored_resume),
+        mcp.Tool("get_tailored_resume_pdf", "Render a saved tailored resume to PDF, identical to the tracker's "
+                 "own download. Returns JSON: file_name, pages, pdf_base64 (decode it to get the .pdf file).",
+                 {"resume_id": {"type": "integer"}}, ["resume_id"], get_tailored_resume_pdf),
+        mcp.Tool("add_job", "Start tracking a job the user found elsewhere (e.g. a job alert email), so tailored "
+                 "resumes can be saved for it. Paste the full job description into description. If a job with the "
+                 "same URL is already tracked, that job is returned unchanged (created: false) instead of a "
+                 "duplicate. Returns job_id and the job's summary.",
+                 {"title": {"type": "string"}, "company": {"type": "string"}, "location": {"type": "string"},
+                  "url": {"type": "string", "description": "The job posting's URL"},
+                  "description": {"type": "string", "description": "The full job description text"},
+                  "status": {"type": "string", "enum": STATUSES, "description": "Defaults to saved"},
+                  "source": {"type": "string", "description": "Where the job was found; defaults to the URL's site"}},
+                 ["title", "company"], add_job),
         mcp.Tool("update_job", "Change a job's status and/or append a note.",
                  {"job_id": int_id, "status": {"type": "string", "enum": STATUSES}, "note": {"type": "string"}},
                  ["job_id"], change_job),
@@ -2004,12 +2067,13 @@ def mcp_tools(db, origin):
 
 
 MCP_INSTRUCTIONS = ("ApplyStack holds the user's job applications, saved job descriptions, their master profile, "
-                    "and tailored resumes. To update the profile from the user's notes: read get_profile, merge in "
+                    "and tailored resumes. If the user gives you a job that isn't tracked yet (check list_jobs), add it with "
+                    "add_job first. To update the profile from the user's notes: read get_profile, merge in "
                     "the facts from their notes, and save the whole thing with update_profile. To tailor a resume: call get_profile and get_job, write the resume "
                     "using only facts from the profile, then save it with save_tailored_resume. Its result includes "
                     "a keyword and format check: if keywords the profile supports are missing, or format checks "
-                    "fail, fix them with update_tailored_resume. Then give the user the returned link (they "
-                    "print it to PDF from there).")
+                    "fail, fix them with update_tailored_resume. Then give the user the returned link, or get the PDF "
+                    "itself with get_tailored_resume_pdf.")
 
 
 @route("POST", r"/mcp", public=True)
