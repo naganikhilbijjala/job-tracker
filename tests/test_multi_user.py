@@ -338,6 +338,64 @@ class MultiUserTest(unittest.TestCase):
         self.assertTrue(tool("save_tailored_resume", {"job_id": self.a_job, "content": "# X\n"})[0]["isError"])
         self.assert_admin_data_intact()
 
+    def test_mcp_update_job_backfills_details_and_links_the_sent_resume(self):
+        token = self.friend.call("GET", "/api/mcp")["json"]["token"]
+
+        def tool(name, args, tok=token):
+            result = Client(bearer=tok).call("POST", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                              "params": {"name": name, "arguments": args}})["json"]["result"]
+            return result, (None if result.get("isError") else json.loads(result["content"][0]["text"]))
+
+        # 1. Tracked from a job-alert preview.
+        _, added = tool("add_job", {"title": "Backend Engineer", "company": "AlertCo",
+                                    "url": "https://jobs.example.com/alert-1", "description": "Short preview…"})
+        job_id = added["job_id"]
+        self.assertLess(added["job"]["desc_len"], 20)
+        tool("update_job", {"job_id": job_id, "note": "Found in an email alert"})
+
+        # 2. Only the description changes.
+        full = "Full posting. We sponsor H-1B visas. " + "Python, Postgres, Kafka. " * 100
+        _, job = tool("update_job", {"job_id": job_id, "description": full})
+        self.assertEqual(job["desc_len"], len(full.strip()))
+        self.assertEqual((job["status"], job["notes"], job["url"], job["location"]),
+                         ("saved", "Found in an email alert", "https://jobs.example.com/alert-1", ""))
+        _, job = tool("update_job", {"job_id": job_id, "salary": "$150k", "location": "Remote", "description": ""})
+        self.assertEqual((job["salary"], job["location"], job["desc_len"]), ("$150k", "Remote", len(full.strip())))
+
+        # 3. Save a tailored resume, then mark applied with it linked.
+        _, saved = tool("save_tailored_resume", {"job_id": job_id,
+                        "content": "# Friend Example\nfriend@example.com\n\n## Experience\n- Python\n",
+                        "title": "AlertCo v1"})
+        _, job = tool("update_job", {"job_id": job_id, "status": "applied", "tailored_resume_id": saved["id"]})
+        self.assertEqual((job["status"], job["tailored_resume_id"], job["tailored_resume_title"]),
+                         ("applied", saved["id"], "AlertCo v1"))
+        self.assertIsNotNone(job["date_applied"])
+
+        # 4. It all persisted.
+        _, got = tool("get_job", {"job_id": job_id})
+        self.assertEqual(got["description"], full.strip())
+        self.assertEqual(got["tailored_resume_sent"]["id"], saved["id"])
+        self.assertTrue(any(e["kind"] == "resume" and "AlertCo v1" in e["detail"] for e in got["history"]))
+
+        # 5. Someone else's (or no such) resume is rejected and the job doesn't change at all.
+        before = self.friend.call("GET", f"/api/jobs/{job_id}")["json"]
+        for args in ({"tailored_resume_id": self.a_gen}, {"tailored_resume_id": 999999},
+                     {"resume_id": self.a_resume}, {"url": "https://jobs.example.com/1"}):
+            res, _ = tool("update_job", {"job_id": job_id, "status": "rejected", "description": "x", **args})
+            self.assertTrue(res["isError"], args)
+        self.assertEqual(self.friend.call("GET", f"/api/jobs/{job_id}")["json"], before)
+        # …and another user's token can't touch this job.
+        self.assertTrue(tool("update_job", {"job_id": job_id, "description": "x"}, self.a_mcp)[0]["isError"])
+        # A URL clash with another of *their own* jobs is refused too.
+        _, other = tool("add_job", {"title": "T", "company": "OtherCo", "url": "https://jobs.example.com/alert-2"})
+        self.assertTrue(tool("update_job", {"job_id": other["job_id"],
+                                            "url": "https://jobs.example.com/alert-1"})[0]["isError"])
+
+        # Deleting the tailored resume clears the link rather than leaving it dangling.
+        self.friend.call("DELETE", f"/api/generated/{saved['id']}")
+        self.assertIsNone(tool("get_job", {"job_id": job_id})[1]["tailored_resume_id"])
+        self.assert_admin_data_intact()
+
     def test_mcp_client_can_fetch_uploaded_resume_files(self):
         import base64
         def tool(token, name, args):

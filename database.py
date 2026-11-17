@@ -117,6 +117,7 @@ def _migrate(db):
     _add_column(db, "jobs", "sponsorship TEXT")  # what the posting says about visas (sponsorship.py); NULL = unchecked
     _add_column(db, "chat_messages", "model TEXT")  # which provider and model wrote an assistant reply
     _add_column(db, "generated_resumes", "model TEXT")  # …and which wrote a saved resume
+    _add_column(db, "jobs", "tailored_resume_id INTEGER")  # the tailored resume sent with the application
     marks = ", ".join("?" * len(USER_SETTING_KEYS))
     db.run_many([
         *[(f"CREATE INDEX IF NOT EXISTS {t}_user ON {t}(user_id)", ()) for t in OWNED_TABLES],
