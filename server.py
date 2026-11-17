@@ -156,8 +156,10 @@ def log_event(job_id, kind, detail=""):
 JOB_LIST_SQL = """
 SELECT j.id, j.company, j.title, j.location, j.url, j.source, j.salary, j.status,
        j.notes, j.resume_id, r.label AS resume_label, j.date_applied, j.follow_up,
-       j.created_at, j.updated_at, length(j.description) AS desc_len, j.sponsorship
+       j.created_at, j.updated_at, length(j.description) AS desc_len, j.sponsorship,
+       j.tailored_resume_id, g.title AS tailored_resume_title
 FROM jobs j LEFT JOIN resumes r ON r.id = j.resume_id AND r.user_id = j.user_id
+            LEFT JOIN generated_resumes g ON g.id = j.tailored_resume_id AND g.user_id = j.user_id
 WHERE j.user_id = ?
 """
 
@@ -279,6 +281,11 @@ def update_job(db, job_id, fields):
         statements.append(("INSERT INTO events (job_id, at, kind, detail) "
                            "SELECT ?, ?, 'resume', label FROM resumes WHERE id = ? AND user_id = ?",
                            (job_id, now(), fields["resume_id"], db.uid)))
+    if fields.get("tailored_resume_id") and fields["tailored_resume_id"] != old.get("tailored_resume_id"):
+        statements.append(("INSERT INTO events (job_id, at, kind, detail) "
+                           "SELECT ?, ?, 'resume', 'Tailored resume #' || id || (CASE WHEN title != '' "
+                           "THEN ': ' || title ELSE '' END) FROM generated_resumes WHERE id = ? AND user_id = ?",
+                           (job_id, now(), fields["tailored_resume_id"], db.uid)))
     db.run_many(statements)
 
 
@@ -1097,6 +1104,8 @@ def jobs_delete(req, job_id):
                  ("DELETE FROM chat_messages WHERE job_id = ?", (job_id,)),
                  ("DELETE FROM resume_reviews WHERE generated_id IN "
                   "(SELECT id FROM generated_resumes WHERE job_id = ?)", (job_id,)),
+                 ("UPDATE jobs SET tailored_resume_id = NULL WHERE user_id = ? AND tailored_resume_id IN "
+                  "(SELECT id FROM generated_resumes WHERE job_id = ?)", (db.uid, job_id)),
                  ("DELETE FROM generated_resumes WHERE job_id = ?", (job_id,)),
                  ("DELETE FROM jobs WHERE id = ? AND user_id = ?", (job_id, db.uid))])
     return json_response({"ok": True})
@@ -1755,6 +1764,8 @@ def generated_delete(req, gid):
     db, _ = backend()
     find_generated(db, gid)
     db.run_many([("DELETE FROM resume_reviews WHERE generated_id = ?", (gid,)),
+                 ("UPDATE jobs SET tailored_resume_id = NULL WHERE tailored_resume_id = ? AND user_id = ?",
+                  (gid, db.uid)),
                  ("DELETE FROM generated_resumes WHERE id = ? AND user_id = ?", (gid, db.uid))])
     return json_response({"ok": True})
 
@@ -1876,6 +1887,9 @@ def mcp_tools(db, origin):
         resume = db.query("SELECT label FROM resumes WHERE id = ? AND user_id = ?",
                           (job["resume_id"], db.uid)) if job["resume_id"] else []
         job["resume_sent"] = resume[0]["label"] if resume else None
+        sent = db.query("SELECT id, title, created_at FROM generated_resumes WHERE id = ? AND user_id = ?",
+                        (job["tailored_resume_id"], db.uid)) if job.get("tailored_resume_id") else []
+        job["tailored_resume_sent"] = sent[0] if sent else None
         job["tailored_resumes"] = db.query("SELECT id, title, created_at FROM generated_resumes "
                                            "WHERE job_id = ? AND user_id = ?", (job_id, db.uid))
         job["history"] = db.query("SELECT at, kind, detail FROM events WHERE job_id = ? ORDER BY id", (job_id,))
@@ -1974,7 +1988,8 @@ def mcp_tools(db, origin):
         return {"id": resume_id, "open_to_print_as_pdf": f"{origin}/resume/{resume_id}", **pdf_summary(resume_id)[1],
                 "check": check_summary(resume_id)}
 
-    def change_job(job_id, status=None, note=None):
+    def change_job(job_id, status=None, note=None, description=None, salary=None, url=None, location=None,
+                   resume_id=None, tailored_resume_id=None):
         rows = db.query("SELECT * FROM jobs WHERE id = ? AND user_id = ?", (job_id, db.uid))
         if not rows:
             raise mcp.ToolError(f"No job with id {job_id}")
@@ -1985,6 +2000,24 @@ def mcp_tools(db, origin):
             fields["status"] = status
         if note:
             fields["notes"] = (rows[0]["notes"] + "\n\n" if rows[0]["notes"] else "") + note
+        # Only what's given changes; empty text is ignored rather than wiping a field.
+        given = {k: v for k, v in {"description": description, "salary": salary, "url": url,
+                                   "location": location}.items() if v is not None and str(v).strip()}
+        fields.update(clean_job(given))
+        if fields.get("url") and db.query("SELECT 1 FROM jobs WHERE user_id = ? AND url = ? AND id != ?",
+                                          (db.uid, fields["url"], job_id)):
+            raise mcp.ToolError("Another tracked job already has that URL")
+        # Everything is checked before anything is written, so a rejected call leaves the job as it was.
+        if resume_id is not None:
+            if not db.query("SELECT 1 FROM resumes WHERE id = ? AND user_id = ?", (resume_id, db.uid)):
+                raise mcp.ToolError(f"No resume file with id {resume_id} (ids come from list_resume_files)")
+            fields["resume_id"] = int(resume_id)
+        if tailored_resume_id is not None:
+            if not db.query("SELECT 1 FROM generated_resumes WHERE id = ? AND user_id = ?",
+                            (tailored_resume_id, db.uid)):
+                raise mcp.ToolError(f"No tailored resume with id {tailored_resume_id} "
+                                    "(ids come from save_tailored_resume or list_tailored_resumes)")
+            fields["tailored_resume_id"] = int(tailored_resume_id)
         update_job(db, int(job_id), fields)
         return job_summary(db, job_id)
 
@@ -2060,8 +2093,23 @@ def mcp_tools(db, origin):
                   "status": {"type": "string", "enum": STATUSES, "description": "Defaults to saved"},
                   "source": {"type": "string", "description": "Where the job was found; defaults to the URL's site"}},
                  ["title", "company"], add_job),
-        mcp.Tool("update_job", "Change a job's status and/or append a note.",
-                 {"job_id": int_id, "status": {"type": "string", "enum": STATUSES}, "note": {"type": "string"}},
+        mcp.Tool("update_job", "Change a job's status, append a note, fill in details, and/or record which "
+                 "resume was sent. Only the fields you pass change. Use description to replace a short preview "
+                 "with the full posting text (this also re-checks what it says about visa sponsorship). When the "
+                 "application is submitted, set status applied (this stamps the applied date and a follow-up) and "
+                 "tailored_resume_id to the tailored resume that was sent.",
+                 {"job_id": int_id, "status": {"type": "string", "enum": STATUSES},
+                  "note": {"type": "string", "description": "Appended to the job's notes"},
+                  "description": {"type": "string", "description": "Replaces the job description"},
+                  "salary": {"type": "string", "description": "Replaces the salary text"},
+                  "url": {"type": "string", "description": "Replaces the posting URL"},
+                  "location": {"type": "string", "description": "Replaces the location"},
+                  "tailored_resume_id": {"type": "integer",
+                                         "description": "The tailored resume sent with the application "
+                                                        "(id from save_tailored_resume or list_tailored_resumes)"},
+                  "resume_id": {"type": "integer",
+                                "description": "An uploaded resume file sent with the application "
+                                               "(id from list_resume_files)"}},
                  ["job_id"], change_job),
     ]
 
